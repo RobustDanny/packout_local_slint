@@ -1,0 +1,21 @@
+[package]
+name = "slint-rust-template"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+chrono = { version = "0.4.42", default-features = false, features = ["clock", "std"] }
+pcsc = "2.9.0"
+rusqlite = { version = "0.37.0", default-features = false, features = ["bundled"] }
+sha2 = { version = "0.10.9", default-features = false }
+slint = { version = "1.14.0", default-features = false, features = ["std", "backend-winit", "renderer-femtovg", "compat-1-2"] }
+
+[build-dependencies]
+slint-build = "1.14.0"
+
+[profile.release]
+opt-level = "z"           # Optimize for size
+lto = true                # Enable Link Time Optimization
+codegen-units = 1         # Better optimization (slower compile)
+strip = true              # Strip symbols from binary
+panic = "abort"           # Don't include unwinding code
