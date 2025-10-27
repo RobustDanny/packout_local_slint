@@ -1,4 +1,4 @@
-import { Button, VerticalBox, GridBox, StandardTableView, LineEdit, HorizontalBox, ComboBox } from "std-widgets.slint";
+import { Button, VerticalBox, GridBox, StandardTableView, LineEdit, HorizontalBox, ComboBox, StandardListView } from "std-widgets.slint";
 import {DropDownMenu, NavigationBar, SearchBar, IconButton, MaterialWindow,
     FilledButton, ElevatedCard ,SmallAppBar, HorizontalDivider, TabBar, LargeAppBar, SegmentedButton, TonalButton} from "material.slint";
 
@@ -29,6 +29,28 @@ struct LogData{
     date_time: string,
 }
 
+struct Package {
+    id: int,
+    apt: string,
+    package_number: string,
+}
+
+component CardItem inherits ElevatedCard {
+    in property <string> title;
+    in property <string> content;
+
+    VerticalBox {
+        padding: 10px;
+        Text {
+            font-weight: 700;
+            text: title;
+        }
+        Text {
+            text: content;
+        }
+    }
+}
+
 export component AppWindow inherits MaterialWindow {
 
     out property <bool> show_resident_form: false;
@@ -46,6 +68,8 @@ export component AppWindow inherits MaterialWindow {
     in-out property <string> info_alert: "";
 
     in-out property <int> verification_type: 0;
+
+    in-out property <bool> inventory: false;
     
     // For resident selection in link card form
     in-out property <[string]> resident_list: [];
@@ -102,6 +126,8 @@ export component AppWindow inherits MaterialWindow {
         {title: "Linked"},
     ];
 
+    
+
     callback add_resident(ResidentData);
     callback add_card(CardData);
     callback add_log();
@@ -133,7 +159,7 @@ export component AppWindow inherits MaterialWindow {
     icon: @image-url("icons/package-box.svg");
     default-font-family: "Montserrat";
     default-font-size: 13px;
-    default-font-weight: 600;
+    default-font-weight: 700;
 
     //Info Alert
 if info_alert != "" : Rectangle {
@@ -156,11 +182,11 @@ if info_alert != "" : Rectangle {
         height: 200px;
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
-        background: #FFF3CD;
+        background: root.info_alert == "Card Linked successfully" ? #ECFDF5 : #FEF2F2;
         border-radius: 12px;
-        border-width: 2px;
-        border-color: #FFC107;
-        drop-shadow-blur: 20px;
+        border-width: 1px;
+        border-color: root.info_alert == "Card Linked successfully" ? #10B981 : #EF4444;
+        // drop-shadow-blur: 20px;
         drop-shadow-color: #00000050;
         
         VerticalLayout {
@@ -174,7 +200,7 @@ if info_alert != "" : Rectangle {
                 font-weight: 600;
                 wrap: word-wrap;
                 horizontal-alignment: center;
-                color: #856404;
+                color:  root.info_alert == "Card Linked successfully" ? #065F46 : #991B1B;
             }
         }
     }
@@ -913,6 +939,7 @@ if info_alert != "" : Rectangle {
                                     {title: "Linked"}
                                 ];
                                 root.current_tab = index;
+                                root.inventory = false;
                                 show_residents_data();
                             } else if (index == 1) {
                                 table_columns = [
@@ -922,6 +949,7 @@ if info_alert != "" : Rectangle {
                                     {title: "Added Date"}
                                 ];
                                 root.current_tab = index;
+                                root.inventory = false;
                                 show_card_data();
                             } else if (index == 2) {
                                 table_columns = [
@@ -931,6 +959,7 @@ if info_alert != "" : Rectangle {
                                     {title: "Date Time"}
                                 ];
                                 root.current_tab = index;
+                                root.inventory = false;
                                 show_log_data();
                             }
                         }
@@ -982,10 +1011,10 @@ if info_alert != "" : Rectangle {
                         IconButton {
                             width: 32px;
                             height: 32px;
-                            
-                            icon: @image-url("icons/box.svg");
+                            icon: root.inventory ? @image-url("icons/open_box.svg") : @image-url("icons/box.svg");
                             tooltip: "Inventory";
                             clicked => {
+                                root.inventory = !root.inventory;
                             }
                         }
                         IconButton {
@@ -1007,7 +1036,7 @@ if info_alert != "" : Rectangle {
                 alignment: center;
                 StandardTableView {
                     width: 800px;
-                    
+                    visible: !root.inventory;
                     columns: root.table_columns;
                     rows: root.current_tab == 0 ? residents_data :
                             root.current_tab == 1 ? cards_data :
@@ -1025,7 +1054,19 @@ if info_alert != "" : Rectangle {
                         }
                     }
                 }
+                StandardListView {
+                    visible: root.inventory;
+                    // VerticalBox {
+                    //     spacing: 10px;
+                    //     padding: 10px;
                 
+                    //     // Use a `for` loop to create a `CardItem` for each element in the `card_data` property.
+                    //     for data in cards_data : CardItem {
+                    //         title: cards_data.length;
+                    //         content: cards_data.length;
+                    //     }
+                    // }
+                }
             }
         }
     }

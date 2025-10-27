@@ -74,6 +74,8 @@ component SearchTextInput  {
             selection_foreground_color: self.color;
              // Disable TextInput's built-in accessibility support as the component takes care of that.
             accessible-role: none;
+            
+        
 
             cursor_position_changed(cursor_position) => {
                 if cursor_position.x + root.computed_x < 0 {
@@ -137,7 +139,7 @@ export component SearchBar {
     property <length> item_height: MaterialStyleMetrics.size_72;
 
     min_height: max(MaterialStyleMetrics.size_56, layout.min_height);
-    forward_focus: state_layer;
+    // forward_focus: state_layer;
 
     Rectangle {
         background: #ECECEB;
@@ -186,132 +188,133 @@ export component SearchBar {
                 }
             }
 
-            changed has_focus => {
-                if self.has_focus {
-                    popup.show();
-                }
-            }
+            // changed has_focus => {
+            //     if self.has_focus {
+            //         popup.show();
+            //     }
+            // }
 
-            clicked => {
-                popup.show();
-            }
-        }
-    }
+            // clicked => {
+            //     popup.show();
+            // }
 
-    popup := PopupWindow {
-        x: 20px;
-        y: 0;
-        width: root.width - 30px;
-        height: root.height;
-        close_policy: close_on_click_outside;
-        // forward-focus: popup_input;
-
-        background_layer := Rectangle {
-            x: 0;
-            y: 0;
-            // width: 100%;
-            // height: root.height;
-            // background: MaterialPalette.surface_container_high;
-            // border_radius: MaterialStyleMetrics.border_radius_28;
-            // clip: true;
-
-            VerticalLayout {
-                HorizontalLayout {
-                    // padding: MaterialStyleMetrics.padding_4;
-                    // spacing: MaterialStyleMetrics.spacing_4;
-
-                    // IconButton {
-                    //     icon: Icons.arrow_back;
-
-                    //     clicked => {
-                    //         popup.close();
-                    //     }
-                    // }
-
-                    popup_input := SearchTextInput {
-                        // placeholder_text: root.placeholder_text;
-                        // text: root.text;
-
-                        accepted => {
-                             root.accepted(self.text);
+            Rectangle {
+                x: 20px;
+                y: 0;
+                width: root.width - 30px;
+                height: root.height;
+                // close_policy: close_on_click_outside;
+                forward-focus: popup_input;
+        
+                background_layer := Rectangle {
+                    x: 0;
+                    y: 0;
+                    // width: 100%;
+                    // height: root.height;
+                    // background: MaterialPalette.surface_container_high;
+                    // border_radius: MaterialStyleMetrics.border_radius_28;
+                    // clip: true;
+        
+                    VerticalLayout {
+                        HorizontalLayout {
+                            // padding: MaterialStyleMetrics.padding_4;
+                            // spacing: MaterialStyleMetrics.spacing_4;
+        
+                            // IconButton {
+                            //     icon: Icons.arrow_back;
+        
+                            //     clicked => {
+                            //         popup.close();
+                            //     }
+                            // }
+        
+                            popup_input := SearchTextInput {
+                                // placeholder_text: root.placeholder_text;
+                                // text: root.text;
+                                accepted => {
+                                     root.accepted(self.text);
+                                }
+        
+                                edited => {
+                                    // root.text = self.text;
+                                    root.edited(self.text);
+                                }
+        
+                                key_pressed(event) => {
+                                     root.key_pressed(event)
+                                }
+        
+                                key_released(event) => {
+                                     root.key_released(event)
+                                }
+        
+                                // changed text => {
+                                //     root.text = text;
+                                // }
+                            }
+        
+                            // IconButton {
+                            //     icon: Icons.close;
+        
+                            //     clicked => {
+                            //         root.text = "";
+                            //         popup.close();
+                            //     }
+                            // }
                         }
-
-                        edited => {
-                            // root.text = self.text;
-                            root.edited(self.text);
-                        }
-
-                        key_pressed(event) => {
-                             root.key_pressed(event)
-                        }
-
-                        key_released(event) => {
-                             root.key_released(event)
-                        }
-
-                        // changed text => {
-                        //     root.text = text;
+        
+                        // HorizontalDivider {}
+        
+                        // if root.items.length == 0 : MaterialText {
+                        //     text: root.empty_text;
+                        //     color: root.color;
+                        //     horizontal_alignment: center;
+                        //     style: MaterialTypography.label_small;
+                        // }
+        
+                        // if root.items.length == 0 : Rectangle {}
+        
+                        // if root.items.length > 0 : ListView {
+                        //     horizontal_stretch: 1;
+        
+                        //     for item[index] in root.items : SearchTile {
+                        //         text: item.text;
+                        //         supporting_text: item.supporting_text;
+                        //         avatar_icon: item.avatar_icon;
+                        //         avatar_text: item.avatar_text;
+                        //         avatar_background: item.avatar_background;
+                        //         avatar_foreground: item.avatar_foreground;
+                        //         action_button_icon: item.action_button_icon;
+        
+                        //         clicked => {
+                        //             root.text = self.text;
+                        //             popup.close();
+                        //         }
+        
+                        //         action_button_clicked => {
+                        //             root.action_button_clicked(index);
+                        //         }
+                        //     }
                         // }
                     }
-
-                    // IconButton {
-                    //     icon: Icons.close;
-
-                    //     clicked => {
-                    //         root.text = "";
-                    //         popup.close();
-                    //     }
+        
+                    // animate height {
+                    //     duration: MaterialAnimations.standard_accelerate_duration;
+                    //     easing: MaterialAnimations.standard_easing;
                     // }
                 }
-
-                // HorizontalDivider {}
-
-                // if root.items.length == 0 : MaterialText {
-                //     text: root.empty_text;
-                //     color: root.color;
-                //     horizontal_alignment: center;
-                //     style: MaterialTypography.label_small;
-                // }
-
-                // if root.items.length == 0 : Rectangle {}
-
-                // if root.items.length > 0 : ListView {
-                //     horizontal_stretch: 1;
-
-                //     for item[index] in root.items : SearchTile {
-                //         text: item.text;
-                //         supporting_text: item.supporting_text;
-                //         avatar_icon: item.avatar_icon;
-                //         avatar_text: item.avatar_text;
-                //         avatar_background: item.avatar_background;
-                //         avatar_foreground: item.avatar_foreground;
-                //         action_button_icon: item.action_button_icon;
-
-                //         clicked => {
-                //             root.text = self.text;
-                //             popup.close();
-                //         }
-
-                //         action_button_clicked => {
-                //             root.action_button_clicked(index);
-                //         }
-                //     }
-                // }
-            }
-
-            // animate height {
-            //     duration: MaterialAnimations.standard_accelerate_duration;
-            //     easing: MaterialAnimations.standard_easing;
-            // }
-        }
-
-        Timer {
-            interval: 50ms;
-
-            triggered => {
-                background_layer.height = popup.height;
-                self.running = false;
+        
+                Timer {
+                    interval: 50ms;
+        
+                    triggered => {
+                        // background_layer.height = popup.height;
+                        self.running = false;
+                    }
+                }
             }
         }
     }
+
+    
 }

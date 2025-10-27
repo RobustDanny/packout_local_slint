@@ -59,6 +59,13 @@ fn create_tables(db: &Connection) {
             date_time TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS package (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            apt TEXT NOT NULL,
+            package_number TEXT NOT NULL,
+            date_time TEXT NOT NULL
+        );
+
         CREATE INDEX IF NOT EXISTS idx_card_resident ON card(resident_id);
         CREATE INDEX IF NOT EXISTS idx_log_date ON log(date_time);
     ").expect("Failed to create tables");

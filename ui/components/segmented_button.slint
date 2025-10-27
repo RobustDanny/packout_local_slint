@@ -49,7 +49,7 @@ component SegmentedItemTemplate {
         x: parent.width - self.width;
         width: 1px;
         height: 100%;
-        background: MaterialPalette.outline;
+        background: MaterialPalette.outline_second;
     }
 
     states [
@@ -75,7 +75,7 @@ export component SegmentedButton {
         clip: true;
         border_width: 1px;
         border_radius: self.height / 2;
-        border_color: MaterialPalette.outline;
+        border_color: MaterialPalette.outline_second;
 
         layout := HorizontalLayout {
             for item[index] in root.items : SegmentedItemTemplate {
