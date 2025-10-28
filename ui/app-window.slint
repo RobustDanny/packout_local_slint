@@ -1,9 +1,8 @@
 import { Button, VerticalBox, GridBox, StandardTableView, LineEdit, HorizontalBox, ComboBox, StandardListView } from "std-widgets.slint";
 import {DropDownMenu, NavigationBar, SearchBar, IconButton, MaterialWindow,
-    FilledButton, ElevatedCard ,SmallAppBar, HorizontalDivider, TabBar, LargeAppBar, SegmentedButton, TonalButton} from "material.slint";
+    FilledButton, ElevatedCard ,SmallAppBar, HorizontalDivider, TabBar, LargeAppBar, SegmentedButton, TonalButton, ScrollView} from "material.slint";
 
 import "./fonts/Montserrat/Montserrat-Regular.ttf";
-// import "./fonts/Montserrat/Montserrat-Bold.ttf";
 import "./fonts/Montserrat/Montserrat-Medium.ttf";
 
 struct ResidentData{
@@ -29,10 +28,12 @@ struct LogData{
     date_time: string,
 }
 
-struct Package {
+struct PackageData {
     id: int,
     apt: string,
     package_number: string,
+    tracking_number: string,
+    date_time: string,
 }
 
 component CardItem inherits ElevatedCard {
@@ -59,6 +60,10 @@ export component AppWindow inherits MaterialWindow {
     in-out property <bool> show_resident_info: false;
     in-out property <bool> show_card_info: false;
     in-out property <bool> show_log_info: false;
+
+    out property <bool> show_package_form: false;
+    out property <bool> show_package_info: false;
+    out property <bool> show_collection_mode: false;
     
     in-out property <int> current_tab: 0;
 
@@ -71,21 +76,33 @@ export component AppWindow inherits MaterialWindow {
 
     in-out property <bool> inventory: false;
     
-    // For resident selection in link card form
     in-out property <[string]> resident_list: [];
     in-out property <int> selected_resident_index: -1;
     
-    // Watch for changes in selected_resident_index
     changed selected_resident_index => {
         if (selected_resident_index >= 0) {
             root.resident_info = get_resident_at_index(selected_resident_index);
         }
     }
 
+    in-out property <PackageData> package: {
+        apt: "",
+        package_number: "",
+        tracking_number: "",
+        date_time: "",
+    };
+    
+    in-out property <PackageData> package_info: {
+        id: 0,
+        apt: "",
+        package_number: "",
+        tracking_number: "",
+        date_time: "",
+    };
+
     in-out property <CardData> card: {
         apt: "",
         added_date: "",
-        // hash: "",
     };
     in-out property <CardData> card_info: {
         resident_id: 0,
@@ -126,7 +143,15 @@ export component AppWindow inherits MaterialWindow {
         {title: "Linked"},
     ];
 
+    in-out property <[[StandardListViewItem]]> packages_data: [[]];
+    in-out property <int> package_count: 0;
     
+    callback add_package(PackageData);
+    callback show_packages_data();
+    callback show_one_package_info(int);
+    callback search_packages(string, int);
+    callback start_collection_mode();
+    callback collect_package_with_card(int, string) -> string;
 
     callback add_resident(ResidentData);
     callback add_card(CardData);
@@ -151,62 +176,55 @@ export component AppWindow inherits MaterialWindow {
 
     background: #FFFEFC;
     width: 1200px;
-    height: 800px;
+    height: 1000px;
     padding: 20px;
     title: "Packout";
-    // no-frame: true;
-    // full-screen: true;
     icon: @image-url("icons/package-box.svg");
     default-font-family: "Montserrat";
     default-font-size: 13px;
     default-font-weight: 700;
 
-    //Info Alert
-if info_alert != "" : Rectangle {
-    width: parent.width;
-    height: parent.height;
-    z: 100;  // Very high z-index to be on top
-    
-    // Semi-transparent background overlay
-    
-    // Click on overlay to close
-    TouchArea {
-        clicked => {
-            root.info_alert = "";
-        }
-    }
-    
-    // Alert box
-    Rectangle { 
-        width: 400px;
-        height: 200px;
-        x: (parent.width - self.width) / 2;
-        y: (parent.height - self.height) / 2;
-        background: root.info_alert == "Card Linked successfully" ? #ECFDF5 : #FEF2F2;
-        border-radius: 12px;
-        border-width: 1px;
-        border-color: root.info_alert == "Card Linked successfully" ? #10B981 : #EF4444;
-        // drop-shadow-blur: 20px;
-        drop-shadow-color: #00000050;
+    // Info Alert
+    if info_alert != "" : Rectangle {
+        width: 100%;
+        height: 100%;
+        z: 100;
         
-        VerticalLayout {
-            padding: 30px;
-            alignment: center;
-            spacing: 25px;
+        TouchArea {
+            clicked => {
+                root.info_alert = "";
+            }
+        }
+        
+        Rectangle { 
+            width: 400px;
+            height: 200px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: root.info_alert == "Card Linked successfully" ? #ECFDF5 : #FEF2F2;
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: root.info_alert == "Card Linked successfully" ? #10B981 : #EF4444;
+            drop-shadow-color: #00000050;
             
-            Text {
-                text: root.info_alert;
-                font-size: 16px;
-                font-weight: 600;
-                wrap: word-wrap;
-                horizontal-alignment: center;
-                color:  root.info_alert == "Card Linked successfully" ? #065F46 : #991B1B;
+            VerticalBox {
+                padding: 30px;
+                alignment: center;
+                spacing: 25px;
+                
+                Text {
+                    text: root.info_alert;
+                    font-size: 16px;
+                    font-weight: 600;
+                    wrap: word-wrap;
+                    horizontal-alignment: center;
+                    color:  root.info_alert == "Card Linked successfully" ? #065F46 : #991B1B;
+                }
             }
         }
     }
-}
 
-    //Resident Info Form
+    // Resident Info Form
     ElevatedCard {
         visible: root.show_resident_form;
         width: 400px;
@@ -215,7 +233,7 @@ if info_alert != "" : Rectangle {
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
         
-        VerticalLayout {
+        VerticalBox {
             padding: 30px;
             spacing: 20px;
             alignment: center;
@@ -231,10 +249,10 @@ if info_alert != "" : Rectangle {
                 background: #E0E0E0;
             }
             
-            VerticalLayout {
+            VerticalBox {
                 spacing: 15px;
                 
-                VerticalLayout {
+                VerticalBox {
                     spacing: 8px;
                     Text {
                         text: "Apartment Number:";
@@ -250,7 +268,7 @@ if info_alert != "" : Rectangle {
                     }
                 }
                 
-                VerticalLayout {
+                VerticalBox {
                     spacing: 8px;
                     Text {
                         text: "First Name:";
@@ -266,7 +284,7 @@ if info_alert != "" : Rectangle {
                     }
                 }
                 
-                VerticalLayout {
+                VerticalBox {
                     spacing: 8px;
                     Text {
                         text: "Last Name:";
@@ -287,7 +305,7 @@ if info_alert != "" : Rectangle {
                 height: 10px;
             }
             
-            HorizontalLayout {
+            HorizontalBox {
                 alignment: center;
                 spacing: 15px;
                 
@@ -299,7 +317,6 @@ if info_alert != "" : Rectangle {
                     clicked() => {
                         add_resident(resident);
                         root.show_resident_form = false;
-                        // Clear the form
                         resident.apt = "";
                         resident.first_name = "";
                         resident.last_name = "";
@@ -312,7 +329,6 @@ if info_alert != "" : Rectangle {
                     text: "Cancel";
                     clicked() => {
                         root.show_resident_form = false;
-                        // Clear the form
                         resident.apt = "";
                         resident.first_name = "";
                         resident.last_name = "";
@@ -322,7 +338,7 @@ if info_alert != "" : Rectangle {
         }
     }
 
-    //Link Card Form
+    // Link Card Form
     ElevatedCard {
         visible: root.show_link_card_form;
         width: 400px;
@@ -331,7 +347,7 @@ if info_alert != "" : Rectangle {
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
         
-        VerticalLayout {
+        VerticalBox {
             padding: 30px;
             spacing: 20px;
             alignment: center;
@@ -347,7 +363,7 @@ if info_alert != "" : Rectangle {
                 background: #E0E0E0;
             }
             
-            VerticalLayout {
+            VerticalBox {
                 spacing: 15px;
                 
                 Text {
@@ -367,14 +383,7 @@ if info_alert != "" : Rectangle {
                     }
                 }
                 
-                // Debug: Show what was selected
-                if selected_resident_index >= 0 : Text {
-                    text: "Selected index: " + selected_resident_index;
-                    font-size: 10px;
-                    color: #999;
-                }
-                
-                if selected_resident_index >= 0 : VerticalLayout {
+                if selected_resident_index >= 0 : VerticalBox {
                     spacing: 10px;
                     
                     Rectangle {
@@ -382,18 +391,18 @@ if info_alert != "" : Rectangle {
                         background: #E0E0E0;
                     }
                     
-                    HorizontalLayout {
+                    HorizontalBox {
                         Text {
                             text: "Resident:";
                             font-weight: 700;
                             width: 100px;
                         }
                         Text {
-                            text: resident_info.first-name + " " + resident_info.last-name;
+                            text: resident_info.first_name + " " + resident_info.last_name;
                         }
                     }
                     
-                    HorizontalLayout {
+                    HorizontalBox {
                         Text {
                             text: "Apartment:";
                             font-weight: 700;
@@ -410,11 +419,11 @@ if info_alert != "" : Rectangle {
                 height: 10px;
             }
             
-            VerticalLayout {
+            VerticalBox {
                 spacing: 10px;
                 
                 Text {
-                    text: "📋 Instructions:";
+                    text: "Instructions:";
                     font-weight: 700;
                     font-size: 16px;
                 }
@@ -443,7 +452,7 @@ if info_alert != "" : Rectangle {
             Rectangle {
                 height: 10px;
             }
-            HorizontalLayout {
+            HorizontalBox {
                 alignment: center;
                 spacing: 15px;
                 
@@ -484,7 +493,7 @@ if info_alert != "" : Rectangle {
         }
     }
 
-    //Resident Info
+    // Resident Info
     ElevatedCard {
         visible: root.show_resident_info;
         width: 450px;
@@ -493,7 +502,7 @@ if info_alert != "" : Rectangle {
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
         
-        VerticalLayout {
+        VerticalBox {
             padding: 30px;
             spacing: 20px;
             alignment: center;
@@ -509,10 +518,10 @@ if info_alert != "" : Rectangle {
                 background: #E0E0E0;
             }
             
-            VerticalLayout {
+            VerticalBox {
                 spacing: 15px;
                 
-                HorizontalLayout {
+                HorizontalBox {
                     spacing: 10px;
                     Text {
                         text: "Apartment:";
@@ -526,7 +535,7 @@ if info_alert != "" : Rectangle {
                     }
                 }
                 
-                HorizontalLayout {
+                HorizontalBox {
                     spacing: 10px;
                     Text {
                         text: "First Name:";
@@ -535,12 +544,12 @@ if info_alert != "" : Rectangle {
                         width: 120px;
                     }
                     Text {
-                        text: resident_info.first-name;
+                        text: resident_info.first_name;
                         font-size: 14px;
                     }
                 }
                 
-                HorizontalLayout {
+                HorizontalBox {
                     spacing: 10px;
                     Text {
                         text: "Last Name:";
@@ -549,7 +558,7 @@ if info_alert != "" : Rectangle {
                         width: 120px;
                     }
                     Text {
-                        text: resident_info.last-name;
+                        text: resident_info.last_name;
                         font-size: 14px;
                     }
                 }
@@ -559,16 +568,13 @@ if info_alert != "" : Rectangle {
                     background: #E0E0E0;
                 }
                 
-                HorizontalLayout {
+                HorizontalBox {
                     spacing: 10px;
-                    VerticalLayout{
-                        alignment: center;
-                        Text {
+                    Text {
                         text: "Card Linked:";
                         font-weight: 700;
                         font-size: 14px;
                         width: 120px;
-                    }
                     }
                     
                     Rectangle {
@@ -576,18 +582,14 @@ if info_alert != "" : Rectangle {
                         height: 30px;
                         border-radius: 15px;
                         background: resident_info.linked ? #4CAF50 : #F44336;
-                        HorizontalLayout {
+                        HorizontalBox {
                             alignment: center;
-                            VerticalLayout {
-                                alignment: center;
-                                Text {
+                            Text {
                                 text: resident_info.linked ? "Yes" : "No";
                                 color: white;
                                 font-weight: 700;
                                 font-size: 12px;
                             }
-                            }
-                            
                         }
                     }
                 }
@@ -597,7 +599,7 @@ if info_alert != "" : Rectangle {
                 height: 20px;
             }
             
-            HorizontalLayout {
+            HorizontalBox {
                 alignment: center;
                 spacing: 15px;
                 
@@ -605,9 +607,7 @@ if info_alert != "" : Rectangle {
                     text: "Update";
                     width: 120px;
                     height: 45px;
-                    clicked() => {
-                        // Add update functionality
-                    }
+                    clicked() => {}
                 }
                 
                 FilledButton {
@@ -623,87 +623,93 @@ if info_alert != "" : Rectangle {
         }
     }
 
-    //Card Info
+    // Add Package Form
     ElevatedCard {
-    visible: root.show_card_info;
-    width: 500px;
-    height: 450px;
-    z: 1;
-    x: (parent.width - self.width) / 2;
-    y: (parent.height - self.height) / 2;
-    
-    VerticalLayout {
-        padding: 30px;
-        spacing: 20px;
-        alignment: center;
+        visible: root.show_package_form;
+        width: 450px;
+        height: 750px;
+        z: 1;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
         
-        Text { 
-            text: "Card Information";
-            font-size: 20px;
-            font-weight: 700;
-        }
-        
-        Rectangle {
-            height: 1px;
-            background: #E0E0E0;
-        }
-        
-        VerticalLayout {
-            spacing: 15px;
+        VerticalBox {
+            padding: 30px;
+            spacing: 20px;
+            alignment: center;
             
-            HorizontalLayout {
-                spacing: 10px;
-                Text {
-                    text: "Card ID:";
-                    font-weight: 700;
-                    font-size: 14px;
-                    width: 130px;
-                }
-                Text {
-                    text: card_info.id;
-                    font-size: 14px;
-                }
+            Text { 
+                text: "Add New Package";
+                font-size: 20px;
+                font-weight: 700;
             }
             
-            HorizontalLayout {
-                spacing: 10px;
-                Text {
-                    text: "Resident ID:";
-                    font-weight: 700;
-                    font-size: 14px;
-                    width: 130px;
-                }
-                Text {
-                    text: card_info.resident-id;
-                    font-size: 14px;
-                }
+            Rectangle {
+                height: 1px;
+                background: #E0E0E0;
             }
             
-            HorizontalLayout {
-                spacing: 10px;
-                Text {
-                    text: "Apartment:";
-                    font-weight: 700;
-                    font-size: 14px;
-                    width: 130px;
+            VerticalBox {
+                spacing: 15px;
+                
+                VerticalBox {
+                    spacing: 8px;
+                    Text {
+                        text: "Apartment Number:";
+                        font-weight: 700;
+                        font-size: 14px;
+                    }
+                    LineEdit {
+                        placeholder-text: "e.g., 101";
+                        height: 45px;
+                        edited(new_text) => {
+                            package.apt = new_text;
+                        }
+                    }
                 }
-                Text {
-                    text: card_info.apt;
-                    font-size: 14px;
+                
+                VerticalBox {
+                    spacing: 8px;
+                    Text {
+                        text: "Package Number:";
+                        font-weight: 700;
+                        font-size: 14px;
+                    }
+                    LineEdit {
+                        placeholder-text: "e.g., 1, 2, 3...;";
+                        height: 45px;
+                        edited(new_text) => {
+                            package.package_number = new_text;
+                        }
+                    }
                 }
-            }
-            
-            HorizontalLayout {
-                spacing: 10px;
-                Text {
-                    text: "Added Date:";
-                    font-weight: 700;
-                    font-size: 14px;
-                    width: 130px;
-                }
-                Text {
-                    text: card_info.added-date;
-                    font-size: 14px;
+                
+                VerticalBox {
+                    spacing: 8px;
+                    HorizontalBox {
+                        Text {
+                            text: "Tracking Number (Optional):";
+                            font-weight: 700;
+                            font-size: 14px;
+                        }
+                        Text {
+                            text: "Scan barcode";
+                            font-size: 12px;
+                            color: #666;
+                        }
+                    }
+                    LineEdit {
+                        placeholder-text: "Click here and scan barcode...";
+                        height: 45px;
+                        edited(new_text) => {
+                            package.tracking_number = new_text;
+                        }
+                    }
+                    Text {
+                        text: "Tip: Click in the field above, then scan with your barcode reader";
+                        font-size: 11px;
+                        color: #666;
+                        wrap: word-wrap;
+                    }
                 }
             }
             
@@ -712,53 +718,331 @@ if info_alert != "" : Rectangle {
                 background: #E0E0E0;
             }
             
-            HorizontalLayout {
+            VerticalBox {
                 spacing: 10px;
+                
                 Text {
-                    text: "Card Hash:";
+                    text: "Instructions:";
                     font-weight: 700;
                     font-size: 14px;
-                    width: 130px;
                 }
+                
                 Text {
-                    text: card_info.hash;
+                    text: "1. Enter apartment number";
                     font-size: 12px;
-                    font-family: "monospace";
-                    color: #666;
                 }
-            }
-        }
-        
-        Rectangle {
-            height: 20px;
-        }
-        
-        HorizontalLayout {
-            alignment: center;
-            spacing: 15px;
-            
-            FilledButton {
-                text: "Unlink Card";
-                width: 140px;
-                height: 45px;
-                clicked() => {
-                    // Add unlink functionality
+                
+                Text {
+                    text: "2. Enter package sequence number";
+                    font-size: 12px;
+                }
+                
+                Text {
+                    text: "3. Scan barcode or manually enter tracking";
+                    font-size: 12px;
                 }
             }
             
-            FilledButton {
-                text: "Close";
-                width: 140px;
-                height: 45px;
-                clicked() => {
-                    root.show_card_info = false;
+            Rectangle {
+                height: 10px;
+            }
+            
+            HorizontalBox {
+                alignment: center;
+                spacing: 15px;
+                
+                FilledButton {
+                    height: 50px;
+                    width: 150px;
+                    text: "Add Package";
+                    enabled: package.apt != "" && package.package_number != "";
+                    clicked() => {
+                        add_package(package);
+                        root.show_package_form = false;
+                        package.apt = "";
+                        package.package_number = "";
+                        package.tracking_number = "";
+                    }
+                }
+                
+                FilledButton {
+                    height: 50px;
+                    width: 150px;
+                    text: "Cancel";
+                    clicked() => {
+                        root.show_package_form = false;
+                        package.apt = "";
+                        package.package_number = "";
+                        package.tracking_number = "";
+                    }
                 }
             }
         }
     }
-}
 
-    //Log Info
+    // Package Info Display
+    ElevatedCard {
+        visible: root.show_package_info;
+        width: 500px;
+        height: 450px;
+        z: 1;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        
+        VerticalBox {
+            padding: 30px;
+            spacing: 20px;
+            alignment: center;
+            
+            Text { 
+                text: "Package Information";
+                font-size: 20px;
+                font-weight: 700;
+            }
+            
+            Rectangle {
+                height: 1px;
+                background: #E0E0E0;
+            }
+            
+            VerticalBox {
+                spacing: 15px;
+                
+                HorizontalBox {
+                    spacing: 10px;
+                    Text {
+                        text: "Package ID:";
+                        font-weight: 700;
+                        font-size: 14px;
+                        width: 150px;
+                    }
+                    Text {
+                        text: package_info.id;
+                        font-size: 14px;
+                    }
+                }
+                
+                HorizontalBox {
+                    spacing: 10px;
+                    Text {
+                        text: "Apartment:";
+                        font-weight: 700;
+                        font-size: 14px;
+                        width: 150px;
+                    }
+                    Text {
+                        text: package_info.apt;
+                        font-size: 14px;
+                    }
+                }
+                
+                HorizontalBox {
+                    spacing: 10px;
+                    Text {
+                        text: "Package Number:";
+                        font-weight: 700;
+                        font-size: 14px;
+                        width: 150px;
+                    }
+                    Text {
+                        text: package_info.package_number;
+                        font-size: 14px;
+                    }
+                }
+                
+                HorizontalBox {
+                    spacing: 10px;
+                    Text {
+                        text: "Tracking Number:";
+                        font-weight: 700;
+                        font-size: 14px;
+                        width: 150px;
+                    }
+                    Text {
+                        text: package_info.tracking_number != "" ? package_info.tracking_number : "N/A";
+                        font-size: 12px;
+                        font-family: "monospace";
+                        color: #666;
+                        wrap: word-wrap;
+                    }
+                }
+                
+                HorizontalBox {
+                    spacing: 10px;
+                    Text {
+                        text: "Received:";
+                        font-weight: 700;
+                        font-size: 14px;
+                        width: 150px;
+                    }
+                    Text {
+                        text: package_info.date_time;
+                        font-size: 14px;
+                    }
+                }
+            }
+            
+            Rectangle {
+                height: 20px;
+            }
+            
+            HorizontalBox {
+                alignment: center;
+                spacing: 15px;
+                
+                FilledButton {
+                    text: "Print Label";
+                    width: 140px;
+                    height: 45px;
+                    clicked() => {}
+                }
+                
+                FilledButton {
+                    text: "Close";
+                    width: 140px;
+                    height: 45px;
+                    clicked() => {
+                        root.show_package_info = false;
+                    }
+                }
+            }
+        }
+    }
+
+    // Card Info
+    ElevatedCard {
+        visible: root.show_card_info;
+        width: 500px;
+        height: 450px;
+        z: 1;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        
+        VerticalBox {
+            padding: 30px;
+            spacing: 20px;
+            alignment: center;
+            
+            Text { 
+                text: "Card Information";
+                font-size: 20px;
+                font-weight: 700;
+            }
+            
+            Rectangle {
+                height: 1px;
+                background: #E0E0E0;
+            }
+            
+            VerticalBox {
+                spacing: 15px;
+                
+                HorizontalBox {
+                    spacing: 10px;
+                    Text {
+                        text: "Card ID:";
+                        font-weight: 700;
+                        font-size: 14px;
+                        width: 130px;
+                    }
+                    Text {
+                        text: card_info.id;
+                        font-size: 14px;
+                    }
+                }
+                
+                HorizontalBox {
+                    spacing: 10px;
+                    Text {
+                        text: "Resident ID:";
+                        font-weight: 700;
+                        font-size: 14px;
+                        width: 130px;
+                    }
+                    Text {
+                        text: card_info.resident_id;
+                        font-size: 14px;
+                    }
+                }
+                
+                HorizontalBox {
+                    spacing: 10px;
+                    Text {
+                        text: "Apartment:";
+                        font-weight: 700;
+                        font-size: 14px;
+                        width: 130px;
+                    }
+                    Text {
+                        text: card_info.apt;
+                        font-size: 14px;
+                    }
+                }
+                
+                HorizontalBox {
+                    spacing: 10px;
+                    Text {
+                        text: "Added Date:";
+                        font-weight: 700;
+                        font-size: 14px;
+                        width: 130px;
+                    }
+                    Text {
+                        text: card_info.added_date;
+                        font-size: 14px;
+                    }
+                }
+                
+                Rectangle {
+                    height: 1px;
+                    background: #E0E0E0;
+                }
+                
+                HorizontalBox {
+                    spacing: 10px;
+                    Text {
+                        text: "Card Hash:";
+                        font-weight: 700;
+                        font-size: 14px;
+                        width: 130px;
+                    }
+                    Text {
+                        text: card_info.hash;
+                        font-size: 12px;
+                        font-family: "monospace";
+                        color: #666;
+                    }
+                }
+            }
+            
+            Rectangle {
+                height: 20px;
+            }
+            
+            HorizontalBox {
+                alignment: center;
+                spacing: 15px;
+                
+                FilledButton {
+                    text: "Unlink Card";
+                    width: 140px;
+                    height: 45px;
+                    clicked() => {}
+                }
+                
+                FilledButton {
+                    text: "Close";
+                    width: 140px;
+                    height: 45px;
+                    clicked() => {
+                        root.show_card_info = false;
+                    }
+                }
+            }
+        }
+    }
+
+    // Log Info
     ElevatedCard {
         visible: root.show_log_info;
         width: 550px;
@@ -767,7 +1051,7 @@ if info_alert != "" : Rectangle {
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
         
-        VerticalLayout {
+        VerticalBox {
             padding: 30px;
             spacing: 20px;
             alignment: center;
@@ -783,10 +1067,10 @@ if info_alert != "" : Rectangle {
                 background: #E0E0E0;
             }
             
-            VerticalLayout {
+            VerticalBox {
                 spacing: 15px;
                 
-                HorizontalLayout {
+                HorizontalBox {
                     spacing: 10px;
                     Text {
                         text: "Log ID:";
@@ -800,7 +1084,7 @@ if info_alert != "" : Rectangle {
                     }
                 }
                 
-                HorizontalLayout {
+                HorizontalBox {
                     spacing: 10px;
                     Text {
                         text: "Date & Time:";
@@ -809,43 +1093,35 @@ if info_alert != "" : Rectangle {
                         width: 120px;
                     }
                     Text {
-                        text: log_info.date-time;
+                        text: log_info.date_time;
                         font-size: 14px;
                     }
                 }
                 
-                HorizontalLayout {
+                HorizontalBox {
                     spacing: 10px;
-                    VerticalLayout{
-                        alignment: center;
-                        Text {
+                    Text {
                         text: "Action Type:";
                         font-weight: 700;
                         font-size: 14px;
                         width: 120px;
                     }
-                    }
-                    VerticalLayout {
-                        Rectangle {
+                    Rectangle {
                         width: 100px;
                         height: 28px;
                         border-radius: 14px;
-                        background: log_info.action-type == "verified" ? #4CAF50 : 
-                                   log_info.action-type == "linked" ? #2196F3 : 
-                                   log_info.action-type == "remove" ? #F44336 : #9E9E9E;
-                        HorizontalLayout {
+                        background: log_info.action_type == "verified" ? #4CAF50 : 
+                                   log_info.action_type == "linked" ? #2196F3 : 
+                                   log_info.action_type == "remove" ? #F44336 : #9E9E9E;
+                        HorizontalBox {
                             alignment: center;
-                            VerticalLayout{
-                                alignment: center;
-                                Text {
-                                text: log_info.action-type;
+                            Text {
+                                text: log_info.action_type;
                                 color: white;
                                 font-weight: 700;
                                 font-size: 12px;
                             }
-                            }
                         }
-                    }
                     }
                 }
                 
@@ -854,7 +1130,7 @@ if info_alert != "" : Rectangle {
                     background: #E0E0E0;
                 }
                 
-                VerticalLayout {
+                VerticalBox {
                     spacing: 8px;
                     Text {
                         text: "Action Details:";
@@ -868,7 +1144,7 @@ if info_alert != "" : Rectangle {
                         border-width: 1px;
                         border-color: #E0E0E0;
                         
-                        VerticalLayout {
+                        VerticalBox {
                             padding: 12px;
                             Text {
                                 text: log_info.action;
@@ -883,80 +1159,489 @@ if info_alert != "" : Rectangle {
         }
     }
 
-    // Background overlay touch area
-    if root.show_link_card_form || root.show_resident_form || root.show_resident_info || root.show_card_info || root.show_log_info : TouchArea {
-    height: 100%; 
-    width: 100%;
-    z: 0;  // Behind the forms
-    clicked => { 
-        root.show_link_card_form = false;
-        root.show_resident_form = false;
-        root.show_resident_info = false;
-        root.show_card_info = false;
-        root.show_log_info = false;
+    // Background overlay for modals
+    if root.show_link_card_form || root.show_resident_form || root.show_resident_info || 
+       root.show_card_info || root.show_log_info || root.show_package_form || root.show_package_info : TouchArea {
+        width: 100%; 
+        height: 100%;
+        z: 0;
+        clicked => { 
+            root.show_link_card_form = false;
+            root.show_resident_form = false;
+            root.show_resident_info = false;
+            root.show_card_info = false;
+            root.show_log_info = false;
+            root.show_package_form = false;
+            root.show_package_info = false;
+        }
     }
-}
 
     if info_alert != "" : TouchArea {
-    height: 100%;
-    width: 100%;
-    z: 0;  // Behind the popup but above everything else
-    clicked => {
-        root.info_alert = "";
+        width: 100%;
+        height: 100%;
+        z: 0;
+        clicked => {
+            root.info_alert = "";
+        }
     }
-}
-    
-    HorizontalLayout {
-        width: parent.width;
-        height: parent.height;
-        alignment: center;
+
+    // Inventory Mode Overlay
+    if root.inventory : Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #F5F5F5;
+        z: 50;
         
-        VerticalLayout {
+        VerticalBox {
+            padding: 40px;
+            alignment: start;
+            spacing: 30px;
+            
+            HorizontalBox {
+                alignment: space-between;
+                
+                VerticalBox {
+                    spacing: 10px;
+                    Text {
+                        text: "Package Collection Station";
+                        font-size: 28px;
+                        font-weight: 700;
+                        color: #1976D2;
+                    }
+                    Text {
+                        text: "Tap your card to collect packages";
+                        font-size: 16px;
+                        color: #666;
+                    }
+                }
+                
+                FilledButton {
+                    text: "Exit Collection Mode";
+                    width: 200px;
+                    height: 50px;
+                    clicked => {
+                        root.inventory = false;
+                    }
+                }
+            }
+            
+            Rectangle {
+                height: 2px;
+                background: #E0E0E0;
+            }
+            
+            HorizontalBox {
+                spacing: 30px;
+                alignment: stretch;
+                
+                ElevatedCard {
+                    width: 500px;
+                    
+                    VerticalBox {
+                        padding: 20px;
+                        spacing: 15px;
+                        
+                        HorizontalBox {
+                            alignment: space-between;
+                            Text {
+                                text: "Available Packages";
+                                font-size: 18px;
+                                font-weight: 700;
+                            }
+                            Rectangle {
+                                width: 50px;
+                                height: 30px;
+                                border-radius: 15px;
+                                background: #4CAF50;
+                                HorizontalBox {
+                                    alignment: center;
+                                    Text {
+                                        text: root.package_count;
+                                        color: white;
+                                        font-weight: 700;
+                                    }
+                                }
+                            }
+                        }
+                        
+                        Rectangle {
+                            height: 1px;
+                            background: #E0E0E0;
+                        }
+                        
+                        ScrollView {
+                            height: 500px;
+                            VerticalBox {
+                                spacing: 10px;
+                                
+                                for row in packages_data : Rectangle {
+                                    height: 80px;
+                                    border-radius: 8px;
+                                    background: #FFFFFF;
+                                    border-width: 2px;
+                                    border-color: #E0E0E0;
+                                    
+                                    TouchArea {
+                                        clicked => {}
+                                    }
+                                    
+                                    HorizontalBox {
+                                        padding: 15px;
+                                        spacing: 15px;
+                                        
+                                        Rectangle {
+                                            width: 60px;
+                                            height: 60px;
+                                            border-radius: 8px;
+                                            background: #2196F3;
+                                            VerticalBox {
+                                                alignment: center;
+                                                Text {
+                                                    text: "APT";
+                                                    color: white;
+                                                    font-size: 10px;
+                                                    font-weight: 700;
+                                                }
+                                                Text {
+                                                    text: row[1].text;
+                                                    color: white;
+                                                    font-size: 18px;
+                                                    font-weight: 700;
+                                                }
+                                            }
+                                        }
+                                        
+                                        VerticalBox {
+                                            spacing: 5px;
+                                            alignment: center;
+                                            
+                                            HorizontalBox {
+                                                Text {
+                                                    text: "Package #" + row[2].text;
+                                                    font-weight: 700;
+                                                    font-size: 16px;
+                                                }
+                                            }
+                                            
+                                            Text {
+                                                text: "Tracking: " + row[3].text;
+                                                font-size: 12px;
+                                                color: #666;
+                                            }
+                                            
+                                            Text {
+                                                text: "Received: " + row[4].text;
+                                                font-size: 11px;
+                                                color: #999;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                VerticalBox {
+                    spacing: 20px;
+                    
+                    ElevatedCard {
+                        height: 300px;
+                        
+                        VerticalBox {
+                            padding: 30px;
+                            alignment: center;
+                            spacing: 20px;
+                            
+                            if root.verification_type == 0 : VerticalBox {
+                                alignment: center;
+                                spacing: 20px;
+                                
+                                Rectangle {
+                                    width: 120px;
+                                    height: 120px;
+                                    border-radius: 60px;
+                                    background: #E3F2FD;
+                                    
+                                    VerticalBox {
+                                        alignment: center;
+                                        Text {
+                                            text: "NFC";
+                                            font-size: 60px;
+                                        }
+                                    }
+                                }
+                                
+                                Text {
+                                    text: "Tap Your Card";
+                                    font-size: 24px;
+                                    font-weight: 700;
+                                    color: #1976D2;
+                                }
+                                
+                                Text {
+                                    text: "Place your NFC card on the reader";
+                                    font-size: 14px;
+                                    color: #666;
+                                    horizontal-alignment: center;
+                                }
+                            }
+                            
+                            if root.verification_type == 1 : VerticalBox {
+                                alignment: center;
+                                spacing: 20px;
+                                
+                                Rectangle {
+                                    width: 120px;
+                                    height: 120px;
+                                    border-radius: 60px;
+                                    background: #E8F5E9;
+                                    
+                                    VerticalBox {
+                                        alignment: center;
+                                        Text {
+                                            text: "Check";
+                                            font-size: 60px;
+                                        }
+                                    }
+                                }
+                                
+                                Text {
+                                    text: "Verified!";
+                                    font-size: 24px;
+                                    font-weight: 700;
+                                    color: #4CAF50;
+                                }
+                                
+                                Text {
+                                    text: root.last_verified_name;
+                                    font-size: 18px;
+                                    color: #333;
+                                    horizontal-alignment: center;
+                                }
+                                
+                                Text {
+                                    text: "Apartment " + root.last_verified_apt;
+                                    font-size: 16px;
+                                    color: #666;
+                                    horizontal-alignment: center;
+                                }
+                            }
+                            
+                            if root.verification_type == 2 : VerticalBox {
+                                alignment: center;
+                                spacing: 20px;
+                                
+                                Rectangle {
+                                    width: 120px;
+                                    height: 120px;
+                                    border-radius: 60px;
+                                    background: #FFEBEE;
+                                    
+                                    VerticalBox {
+                                        alignment: center;
+                                        Text {
+                                            text: "Cross";
+                                            font-size: 60px;
+                                        }
+                                    }
+                                }
+                                
+                                Text {
+                                    text: "Unknown Card";
+                                    font-size: 24px;
+                                    font-weight: 700;
+                                    color: #F44336;
+                                }
+                                
+                                Text {
+                                    text: "Card not registered";
+                                    font-size: 14px;
+                                    color: #666;
+                                    horizontal-alignment: center;
+                                }
+                            }
+                        }
+                    }
+                    
+                    HorizontalBox {
+                        spacing: 20px;
+                        
+                        ElevatedCard {
+                            VerticalBox {
+                                padding: 20px;
+                                spacing: 10px;
+                                alignment: center;
+                                
+                                Text {
+                                    text: root.package_count;
+                                    font-size: 32px;
+                                    font-weight: 700;
+                                    color: #2196F3;
+                                }
+                                
+                                Text {
+                                    text: "Pending Packages";
+                                    font-size: 12px;
+                                    color: #666;
+                                }
+                            }
+                        }
+                        
+                        ElevatedCard {
+                            VerticalBox {
+                                padding: 20px;
+                                spacing: 10px;
+                                alignment: center;
+                                
+                                Text {
+                                    text: "Today";
+                                    font-size: 16px;
+                                    font-weight: 700;
+                                    color: #4CAF50;
+                                }
+                                
+                                Text {
+                                    text: "Collections";
+                                    font-size: 12px;
+                                    color: #666;
+                                }
+                            }
+                        }
+                    }
+                    
+                    ElevatedCard {
+                        VerticalBox {
+                            padding: 20px;
+                            spacing: 15px;
+                            
+                            Text {
+                                text: "How to Collect Packages";
+                                font-weight: 700;
+                                font-size: 16px;
+                            }
+                            
+                            Rectangle {
+                                height: 1px;
+                                background: #E0E0E0;
+                            }
+                            
+                            VerticalBox {
+                                spacing: 10px;
+                                
+                                HorizontalBox {
+                                    spacing: 10px;
+                                    Text {
+                                        text: "1.";
+                                        font-weight: 700;
+                                        width: 30px;
+                                    }
+                                    Text {
+                                        text: "Resident taps their NFC card";
+                                        font-size: 13px;
+                                    }
+                                }
+                                
+                                HorizontalBox {
+                                    spacing: 10px;
+                                    Text {
+                                        text: "2.";
+                                        font-weight: 700;
+                                        width: 30px;
+                                    }
+                                    Text {
+                                        text: "System verifies apartment match";
+                                        font-size: 13px;
+                                    }
+                                }
+                                
+                                HorizontalBox {
+                                    spacing: 10px;
+                                    Text {
+                                        text: "3.";
+                                        font-weight: 700;
+                                        width: 30px;
+                                    }
+                                    Text {
+                                        text: "Packages automatically marked as collected";
+                                        font-size: 13px;
+                                    }
+                                }
+                                
+                                HorizontalBox {
+                                    spacing: 10px;
+                                    Text {
+                                        text: "4.";
+                                        font-weight: 700;
+                                        width: 30px;
+                                    }
+                                    Text {
+                                        text: "Transaction logged with timestamp";
+                                        font-size: 13px;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Main UI
+    HorizontalBox {
+        alignment: center;
+        width: 100%;
+        height: 100%;
+
+        VerticalBox {
             padding: 20px;
-            HorizontalLayout {
+            spacing: 20px;
+
+            // Toolbar
+            HorizontalBox {
                 alignment: center;
                 spacing: 20px;
                 width: 1000px;
                 height: 80px;
-                VerticalLayout {
-                    width: 300px;
+
+                VerticalBox {
+                    width: 400px;
                     height: 56px;
                     alignment: center;
                     SegmentedButton {
                         items: [
                             { text: "People" },
                             { text: "Cards" },
+                            { text: "Pack" },
                             { text: "Logs" }
                         ];
                         current-index <=> root.current_tab;
                         index_changed(index) => {
                             if (index == 0) {
                                 table_columns = [
-                                    {title: "ID"},
-                                    {title: "Apt"},
-                                    {title: "First Name"},
-                                    {title: "Last Name"},
-                                    {title: "Linked"}
+                                    {title: "ID"}, {title: "Apt"}, {title: "First Name"}, {title: "Last Name"}, {title: "Linked"}
                                 ];
                                 root.current_tab = index;
                                 root.inventory = false;
                                 show_residents_data();
                             } else if (index == 1) {
                                 table_columns = [
-                                    {title: "ID"},
-                                    {title: "Apt"},
-                                    {title: "Resident Name"},
-                                    {title: "Added Date"}
+                                    {title: "ID"}, {title: "Apt"}, {title: "Resident Name"}, {title: "Added Date"}
                                 ];
                                 root.current_tab = index;
                                 root.inventory = false;
                                 show_card_data();
                             } else if (index == 2) {
                                 table_columns = [
-                                    {title: "ID"},
-                                    {title: "Action Type"},
-                                    {title: "Action"},
-                                    {title: "Date Time"}
+                                    {title: "ID"}, {title: "Apt"}, {title: "Pkg #"}, {title: "Tracking"}, {title: "Received"}
+                                ];
+                                root.current_tab = index;
+                                root.inventory = false;
+                                show_packages_data();
+                            } else if (index == 3) {
+                                table_columns = [
+                                    {title: "ID"}, {title: "Action Type"}, {title: "Action"}, {title: "Date Time"}
                                 ];
                                 root.current_tab = index;
                                 root.inventory = false;
@@ -965,7 +1650,8 @@ if info_alert != "" : Rectangle {
                         }
                     }
                 }
-                VerticalLayout {
+
+                VerticalBox {
                     alignment: center;
                     height: 56px;
                     SearchBar {
@@ -982,30 +1668,36 @@ if info_alert != "" : Rectangle {
                     }
                 }
                 
-                VerticalLayout {
+                VerticalBox {
                     alignment: center;
                     height: 56px;
-                    HorizontalLayout {
+                    HorizontalBox {
                         spacing: 20px;
                         IconButton {
                             width: 32px;
                             height: 32px;
-                            
                             icon: @image-url("icons/add_resident.svg");
                             tooltip: "Add resident";
                             clicked => {
-                                root.show_resident_form = !show_resident_form;
-    
+                                root.show_resident_form = !root.show_resident_form;
                             }
                         }
                         IconButton {
                             width: 32px;
                             height: 32px;
-                            
                             icon: @image-url("icons/link_card.svg");
                             tooltip: "Link card";
                             clicked => {
-                                root.show_link_card_form = !show_link_card_form;
+                                root.show_link_card_form = !root.show_link_card_form;
+                            }
+                        }
+                        IconButton {
+                            width: 32px;
+                            height: 32px;
+                            icon: @image-url("icons/package.svg");
+                            tooltip: "Add Package";
+                            clicked => {
+                                root.show_package_form = !root.show_package_form;
                             }
                         }
                         IconButton {
@@ -1020,27 +1712,26 @@ if info_alert != "" : Rectangle {
                         IconButton {
                             width: 32px;
                             height: 32px;
-                            
                             icon: @image-url("icons/cog.svg");
                             tooltip: "Config";
-                            clicked => {
-                            }
+                            clicked => {}
                         }
                     }
-                    
                 }
-                    
             }
 
-            HorizontalLayout {
+            // Table
+            HorizontalBox {
                 alignment: center;
                 StandardTableView {
-                    width: 800px;
+                    min-width: 800px;
+                    max-width: 800px;
                     visible: !root.inventory;
                     columns: root.table_columns;
                     rows: root.current_tab == 0 ? residents_data :
-                            root.current_tab == 1 ? cards_data :
-                            logs_data;
+                          root.current_tab == 1 ? cards_data :
+                          root.current_tab == 2 ? packages_data :
+                          logs_data;
                     current-row-changed(index) => {
                         if (root.current_tab == 0) {
                             root.show_resident_info = true;
@@ -1048,27 +1739,16 @@ if info_alert != "" : Rectangle {
                         } else if (root.current_tab == 1) {
                             root.show_card_info = true;
                             show_one_card_info(index);
+                        } else if (root.current_tab == 2) {
+                            root.show_package_info = true;
+                            show_one_package_info(index);
                         } else {
                             root.show_log_info = true;
                             show_one_log_info(index);
                         }
                     }
                 }
-                StandardListView {
-                    visible: root.inventory;
-                    // VerticalBox {
-                    //     spacing: 10px;
-                    //     padding: 10px;
-                
-                    //     // Use a `for` loop to create a `CardItem` for each element in the `card_data` property.
-                    //     for data in cards_data : CardItem {
-                    //         title: cards_data.length;
-                    //         content: cards_data.length;
-                    //     }
-                    // }
-                }
             }
         }
     }
-
 }

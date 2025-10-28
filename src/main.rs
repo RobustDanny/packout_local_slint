@@ -12,8 +12,6 @@ slint::include_modules!();
 
 // COMPLETE FIX - Add a Mutex to control NFC reader access
 
-// COMPLETE FIX - Add a Mutex to control NFC reader access
-
 fn main() -> Result<(), Box<dyn Error>> {
     let ui = AppWindow::new()?;
     let db = Arc::new(Mutex::new(slint_rust_template::connect_to_db()));
@@ -21,6 +19,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let resident_ids: Rc<RefCell<Vec<u32>>> = Rc::new(RefCell::new(Vec::new()));
     let card_ids: Rc<RefCell<Vec<u32>>> = Rc::new(RefCell::new(Vec::new()));
     let log_ids: Rc<RefCell<Vec<u32>>> = Rc::new(RefCell::new(Vec::new()));
+    let package_ids: Rc<RefCell<Vec<u32>>> = Rc::new(RefCell::new(Vec::new()));
     
     // Flag to pause automatic verification during card linking
     let verification_paused = Arc::new(Mutex::new(false));
@@ -377,35 +376,31 @@ fn main() -> Result<(), Box<dyn Error>> {
                 )?;
                 Ok(())
             });
-
+            
             drop(db_guard);
-
-            match db_result {
+            
+            let result = match db_result {
                 Ok(_) => {
-                    println!("✓ Card data saved to database!");
-                    println!("=== Card Linking Complete ===");
-                    
                     if let Some(ui) = ui_handle.upgrade() {
-                        ui.set_verification_type(1);
-                        let success_msg = format!("Card linked successfully!\nUID: {}\nHash: {}...", 
-                            uid, &hash[..16]);
-                        ui.set_verification_status(success_msg.into());
                         ui.set_info_alert("Card Linked successfully".into());
-
+                        ui.invoke_show_residents_data();
+                        ui.invoke_show_card_data();
+                        ui.invoke_show_log_data();
                     }
-                    
-                    println!("▶️  Resuming automatic verification in 2 seconds...\n");
-                    std::thread::sleep(std::time::Duration::from_secs(2));
-                    *verification_paused.lock().unwrap() = false;
-                    return "Success! Card linked.".into();
+                    "Success! Card linked.".to_string()
                 }
                 Err(e) => {
-                    let error_msg = format!("Database error: {}", e);
+                    let error_msg = format!("Failed to save card to database: {}", e);
                     println!("✗ {}", error_msg);
-                    *verification_paused.lock().unwrap() = false;
-                    return error_msg.into();
+                    error_msg
                 }
-            }
+            };
+            
+            // Resume verification
+            *verification_paused.lock().unwrap() = false;
+            println!("▶️ Verification resumed\n");
+            
+            result.into()
         }
     });
 
@@ -416,68 +411,46 @@ fn main() -> Result<(), Box<dyn Error>> {
         move || {
             let ui = ui_handle.unwrap();
             let db_guard = db.lock().unwrap();
-            let row_data = get_residents_data(&*db_guard).unwrap();
-            let (table_model, ids) = convert_resident_data_vec(row_data);
-            *resident_ids.borrow_mut() = ids.clone();
-            ui.set_residents_data(table_model);
+            
+            if let Ok(row_data) = get_residents_data(&*db_guard) {
+                let (table_model, ids) = convert_resident_data_vec(row_data);
+                *resident_ids.borrow_mut() = ids;
+                ui.set_residents_data(table_model);
+            }
             
             drop(db_guard);
             update_resident_list(&ui, &db, &resident_ids);
         }
     });
 
-    ui.on_show_one_log_info({
-        let ui_handle = ui.as_weak();
-        let db = Arc::clone(&db);
-        let log_ids = Rc::clone(&log_ids);
-        move |index| {
-            let ui = ui_handle.unwrap();
-            
-            let ids = log_ids.borrow();
-            if let Some(&db_id) = ids.get(index as usize) {
-                let db = db.lock().unwrap();
-                if let Ok(one_log_info) = get_log_info(&*db, db_id) {
-                    let slint_resident = LogData {
-                        id: one_log_info.id as i32,
-                        action_type: one_log_info.action_type.into(),
-                        action: one_log_info.action.into(),
-                        date_time: one_log_info.date_time.into(),
-                    };
-                    ui.set_log_info(slint_resident);
-                }
-            }
-        } 
-    });
-
-    ui.on_show_one_card_info({
+    ui.on_show_card_data({
         let ui_handle = ui.as_weak();
         let db = Arc::clone(&db);
         let card_ids = Rc::clone(&card_ids);
-        move |index| {
+        move || {
             let ui = ui_handle.unwrap();
-            
-            let ids = card_ids.borrow();
-            if let Some(&db_id) = ids.get(index as usize) {
-                let db = db.lock().unwrap();
-                if let Ok(one_card_info) = get_card_info(&*db, db_id) {
-                    // Truncate hash to first 16 characters + "..."
-                    let display_hash = if one_card_info.hash.len() > 16 {
-                        format!("{}...", &one_card_info.hash[..16])
-                    } else {
-                        one_card_info.hash.clone()
-                    };
-                    
-                    let slint_resident = CardData {
-                        id: one_card_info.id as i32,
-                        resident_id: one_card_info.resident_id as i32,
-                        apt: one_card_info.apt.into(),
-                        added_date: one_card_info.added_date.into(),
-                        hash: display_hash.into(),  // Use truncated hash
-                    };
-                    ui.set_card_info(slint_resident);
-                }
+            let db = db.lock().unwrap();
+            if let Ok(row_data) = get_cards_data(&*db) {
+                let (table_model, ids) = convert_card_data_vec(row_data, &db);
+                *card_ids.borrow_mut() = ids;
+                ui.set_cards_data(table_model);
             }
-        } 
+        }
+    });
+
+    ui.on_show_log_data({
+        let ui_handle = ui.as_weak();
+        let db = Arc::clone(&db);
+        let log_ids = Rc::clone(&log_ids);
+        move || {
+            let ui = ui_handle.unwrap();
+            let db = db.lock().unwrap();
+            if let Ok(row_data) = get_logs_data(&*db) {
+                let (table_model, ids) = convert_log_data_vec(row_data);
+                *log_ids.borrow_mut() = ids;
+                ui.set_logs_data(table_model);
+            }
+        }
     });
 
     ui.on_show_one_resident_info({
@@ -493,15 +466,62 @@ fn main() -> Result<(), Box<dyn Error>> {
                 if let Ok(one_resident_info) = get_resident_info(&*db, db_id) {
                     let slint_resident = ResidentData {
                         id: one_resident_info.id as i32,
-                        apt: one_resident_info.apt.into(),
-                        first_name: one_resident_info.first_name.into(),
-                        last_name: one_resident_info.last_name.into(),
+                        apt: one_resident_info.apt.clone().into(),
+                        first_name: one_resident_info.first_name.clone().into(),
+                        last_name: one_resident_info.last_name.clone().into(),
                         linked: one_resident_info.linked,
                     };
                     ui.set_resident_info(slint_resident);
                 }
             }
-        } 
+        }
+    });
+
+    ui.on_show_one_card_info({
+        let ui_handle = ui.as_weak();
+        let db = Arc::clone(&db);
+        let card_ids = Rc::clone(&card_ids);
+        move |index| {
+            let ui = ui_handle.unwrap();
+            
+            let ids = card_ids.borrow();
+            if let Some(&db_id) = ids.get(index as usize) {
+                let db = db.lock().unwrap();
+                if let Ok(one_card_info) = get_card_info(&*db, db_id) {
+                    let slint_card = CardData {
+                        id: one_card_info.id as i32,
+                        resident_id: one_card_info.resident_id as i32,
+                        apt: one_card_info.apt.clone().into(),
+                        added_date: one_card_info.added_date.clone().into(),
+                        hash: one_card_info.hash.clone().into(),
+                    };
+                    ui.set_card_info(slint_card);
+                }
+            }
+        }
+    });
+
+    ui.on_show_one_log_info({
+        let ui_handle = ui.as_weak();
+        let db = Arc::clone(&db);
+        let log_ids = Rc::clone(&log_ids);
+        move |index| {
+            let ui = ui_handle.unwrap();
+            
+            let ids = log_ids.borrow();
+            if let Some(&db_id) = ids.get(index as usize) {
+                let db = db.lock().unwrap();
+                if let Ok(one_log_info) = get_log_info(&*db, db_id) {
+                    let slint_log = LogData {
+                        id: one_log_info.id as i32,
+                        action_type: one_log_info.action_type.clone().into(),
+                        action: one_log_info.action.clone().into(),
+                        date_time: one_log_info.date_time.clone().into(),
+                    };
+                    ui.set_log_info(slint_log);
+                }
+            }
+        }
     });
 
     ui.on_search_residents({
@@ -531,7 +551,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     ui.on_search_cards({
         let ui_handle = ui.as_weak();
         let db = Arc::clone(&db);
-        let card_ids = Rc::clone(&card_ids);  // Add this line
+        let card_ids = Rc::clone(&card_ids);
         move |query, tab_index| {
             let ui = ui_handle.unwrap();
             
@@ -547,51 +567,19 @@ fn main() -> Result<(), Box<dyn Error>> {
             };
             
             let (table_model, ids) = convert_card_data_vec(row_data, &db);
-            *card_ids.borrow_mut() = ids;  // Add this line to store IDs
+            *card_ids.borrow_mut() = ids;
             ui.set_cards_data(table_model);
-        }
-    });
-
-    ui.on_show_card_data({
-        let ui_handle = ui.as_weak();
-        let db = Arc::clone(&db);
-        let card_ids = Rc::clone(&card_ids);  // Add this line
-        move || {
-            let ui = ui_handle.unwrap();
-            let db_guard = db.lock().unwrap();
-            let row_data = get_cards_data(&*db_guard).unwrap();
-            let (table_model, ids) = convert_card_data_vec(row_data, &*db_guard);
-            *card_ids.borrow_mut() = ids;  // Add this line to store IDs
-            ui.set_cards_data(table_model);
-            
-            drop(db_guard);
-        }
-    });
-
-    ui.on_show_log_data({
-        let ui_handle = ui.as_weak();
-        let db = Arc::clone(&db);
-        let log_ids = Rc::clone(&log_ids);  // Add this line
-        move || {
-            let ui = ui_handle.unwrap();
-            let db_guard = db.lock().unwrap();
-            let row_data = get_logs_data(&*db_guard).unwrap();
-            let (table_model, ids) = convert_log_data_vec(row_data);
-            *log_ids.borrow_mut() = ids;  // Add this line to store IDs
-            ui.set_logs_data(table_model);
-            
-            drop(db_guard);
         }
     });
 
     ui.on_search_logs({
         let ui_handle = ui.as_weak();
         let db = Arc::clone(&db);
-        let log_ids = Rc::clone(&log_ids);  // Add this line
+        let log_ids = Rc::clone(&log_ids);
         move |query, tab_index| {
             let ui = ui_handle.unwrap();
             
-            if tab_index != 2 {
+            if tab_index != 3 {
                 return;
             }
             
@@ -603,8 +591,212 @@ fn main() -> Result<(), Box<dyn Error>> {
             };
             
             let (table_model, ids) = convert_log_data_vec(row_data);
-            *log_ids.borrow_mut() = ids;  // Add this line to store IDs
+            *log_ids.borrow_mut() = ids;
             ui.set_logs_data(table_model);
+        }
+    });
+
+    ui.on_add_package({
+        let ui_handle = ui.as_weak();
+        let db = Arc::clone(&db);
+        let package_ids = Rc::clone(&package_ids);
+        move |package_data: PackageData| {
+            let ui = ui_handle.unwrap();
+            
+            let db_guard = db.lock().unwrap();
+            
+            let tracking = if package_data.tracking_number.is_empty() {
+                None
+            } else {
+                Some(package_data.tracking_number.as_str())
+            };
+            
+            match add_package(
+                &*db_guard,
+                package_data.apt.as_str(),
+                package_data.package_number.as_str(),
+                tracking,
+            ) {
+                Ok(_) => {
+                    let row_data = get_packages_data(&*db_guard).unwrap();
+                    let (table_model, ids) = convert_package_data_vec(row_data);
+                    *package_ids.borrow_mut() = ids;
+                    ui.set_packages_data(table_model);
+                    ui.set_info_alert("Package Added Successfully".into());
+                    
+                    println!("✅ Package added for Apt {}", package_data.apt);
+                }
+                Err(e) => {
+                    println!("Failed to add package: {}", e);
+                    ui.set_info_alert(format!("Error: {}", e).into());
+                }
+            }
+        }
+    });
+    
+    ui.on_show_packages_data({
+        let ui_handle = ui.as_weak();
+        let db = Arc::clone(&db);
+        let package_ids = Rc::clone(&package_ids);
+        move || {
+            let ui = ui_handle.unwrap();
+            let db_guard = db.lock().unwrap();
+            
+            if let Ok(row_data) = get_packages_data(&*db_guard) {
+                let package_count = row_data.len();
+                let (table_model, ids) = convert_package_data_vec(row_data);
+                *package_ids.borrow_mut() = ids;
+                ui.set_packages_data(table_model);
+                ui.set_package_count(package_count as i32);
+                
+                println!("📦 Showing {} pending packages", package_count);
+            }
+        }
+    });
+    
+    ui.on_show_one_package_info({
+        let ui_handle = ui.as_weak();
+        let db = Arc::clone(&db);
+        let package_ids = Rc::clone(&package_ids);
+        move |index| {
+            let ui = ui_handle.unwrap();
+            
+            let ids = package_ids.borrow();
+            if let Some(&db_id) = ids.get(index as usize) {
+                let db = db.lock().unwrap();
+                if let Ok(pkg_info) = get_package_info(&*db, db_id) {
+                    let slint_package = PackageData {
+                        id: pkg_info.id as i32,
+                        apt: pkg_info.apt.into(),
+                        package_number: pkg_info.package_number.into(),
+                        tracking_number: pkg_info.tracking_number
+                            .unwrap_or_else(|| "N/A".to_string())
+                            .into(),
+                        date_time: pkg_info.date_time.into(),
+                    };
+                    ui.set_package_info(slint_package);
+                }
+            }
+        }
+    });
+    
+    ui.on_search_packages({
+        let ui_handle = ui.as_weak();
+        let db = Arc::clone(&db);
+        let package_ids = Rc::clone(&package_ids);
+        move |query, tab_index| {
+            let ui = ui_handle.unwrap();
+            
+            if tab_index != 2 {  // Packages tab is index 2
+                return;
+            }
+            
+            let db = db.lock().unwrap();
+            let row_data = if query.is_empty() {
+                get_packages_data(&*db).unwrap()
+            } else {
+                search_packages(&*db, query.as_str()).unwrap()
+            };
+            
+            let (table_model, ids) = convert_package_data_vec(row_data);
+            *package_ids.borrow_mut() = ids;
+            ui.set_packages_data(table_model);
+        }
+    });
+    
+    // Package Collection with NFC Card Verification
+    ui.on_collect_package_with_card({
+        let ui_handle = ui.as_weak();
+        let db = Arc::clone(&db);
+        let nfc_reader_lock = Arc::clone(&nfc_reader_lock);
+        
+        move |package_id: i32, _apt: slint::SharedString| -> slint::SharedString {
+            println!("\n📦 Package Collection Started");
+            println!("  Package ID: {}", package_id);
+            
+            // Pause automatic verification
+            *verification_paused.lock().unwrap() = true;
+            
+            // Acquire NFC lock
+            let _nfc_lock = nfc_reader_lock.lock().unwrap();
+            
+            // Wait for card
+            println!("🔍 Waiting for resident card...");
+            
+            let reader_result = NFCReader::new().and_then(|mut r| {
+                let readers = r.list_readers()?;
+                if let Some(first_reader) = readers.first() {
+                    r.select_reader(first_reader)?;
+                    Ok(r)
+                } else {
+                    Err("No readers found".into())
+                }
+            });
+            
+            let reader = match reader_result {
+                Ok(r) => r,
+                Err(e) => {
+                    println!("❌ Failed to initialize NFC reader: {}", e);
+                    drop(_nfc_lock);
+                    *verification_paused.lock().unwrap() = false;
+                    return format!("Error: {}", e).into();
+                }
+            };
+            
+            // Read card hash
+            let card_hash = match reader.wait_for_card(15) {
+                Ok(uid) => {
+                    println!("✅ Card detected: {}", uid);
+                    match reader.read_hash_from_card(4) {
+                        Ok(hash) => hash,
+                        Err(e) => {
+                            println!("❌ Failed to read card: {}", e);
+                            drop(reader);
+                            drop(_nfc_lock);
+                            *verification_paused.lock().unwrap() = false;
+                            return "Error: Card not registered".into();
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("❌ Timeout waiting for card: {}", e);
+                    drop(reader);
+                    drop(_nfc_lock);
+                    *verification_paused.lock().unwrap() = false;
+                    return "Error: No card detected".into();
+                }
+            };
+            
+            // Release NFC resources
+            drop(reader);
+            drop(_nfc_lock);
+            
+            // Process collection in database
+            let db_guard = db.lock().unwrap();
+            match collect_package(&*db_guard, package_id as u32, &card_hash) {
+                Ok(resident_name) => {
+                    println!("✅ Package collected by: {}", resident_name);
+                    
+                    // Refresh package list
+                    if let Ok(row_data) = get_packages_data(&*db_guard) {
+                        let (table_model, ids) = convert_package_data_vec(row_data);
+                        drop(db_guard);
+                        
+                        if let Some(ui) = ui_handle.upgrade() {
+                            ui.set_packages_data(table_model);
+                            ui.set_info_alert(format!("Package collected by {}", resident_name).into());
+                        }
+                    }
+                    
+                    *verification_paused.lock().unwrap() = false;
+                    format!("Success: {}", resident_name).into()
+                }
+                Err(e) => {
+                    println!("❌ Collection failed: {}", e);
+                    *verification_paused.lock().unwrap() = false;
+                    format!("Error: {}", e).into()
+                }
+            }
         }
     });
 
@@ -716,7 +908,7 @@ fn start_automatic_verification(
 
                                 if let Some(result) = verification_result {
                                     match result {
-                                        Ok((_, apt, first_name, last_name, stored_hash)) if stored_hash == card_hash => {
+                                        Ok((resident_id, apt, first_name, last_name, stored_hash)) if stored_hash == card_hash => {
                                             let success_msg = format!(
                                                 "✓ VERIFIED\n{} {}\nApartment: {}", 
                                                 first_name, last_name, apt
@@ -731,7 +923,24 @@ fn start_automatic_verification(
                                                 ui.set_last_verified_apt(apt.clone().into());
                                             }
                                             
-                                            
+                                            // Check if in inventory mode and collect packages if yes
+                                            if let Some(ui) = ui_weak.upgrade() {
+                                                if ui.get_inventory() {
+                                                    let db_guard = db.lock().unwrap();
+                                                    let packages = get_packages_for_resident(&db_guard, &apt).unwrap_or_default();
+                                                    let mut collected_count = 0;
+                                                    for pkg in &packages {
+                                                        if collect_package(&db_guard, pkg.id, &card_hash).is_ok() {
+                                                            collected_count += 1;
+                                                        }
+                                                    }
+                                                    drop(db_guard);
+                                                    
+                                                    ui.invoke_show_packages_data();
+                                                    ui.set_package_count(ui.get_package_count() - collected_count);
+                                                    ui.set_info_alert(format!("Collected {} packages", collected_count).into());
+                                                }
+                                            }
 
                                             // Log verification in separate short lock
                                             if let Ok(db) = db.try_lock() {

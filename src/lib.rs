@@ -25,6 +25,15 @@ pub struct LogData{
     pub date_time: String,
 }
 
+pub struct PackageData {
+    pub id: u32,
+    pub apt: String,
+    pub package_number: String,
+    pub tracking_number: Option<String>,
+    pub date_time: String,
+    pub status: String, // "pending", "collected", "returned"
+}
+
 pub fn connect_to_db()->Connection{
     let db = Connection::open("package_room.db").expect("Cant connect to database");
     // Enable foreign keys
@@ -63,11 +72,18 @@ fn create_tables(db: &Connection) {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             apt TEXT NOT NULL,
             package_number TEXT NOT NULL,
-            date_time TEXT NOT NULL
+            tracking_number TEXT,
+            date_time TEXT NOT NULL,
+            status TEXT DEFAULT 'pending',
+            collection_time TEXT,
+            collected_by INTEGER,
+            FOREIGN KEY (collected_by) REFERENCES resident(id)
         );
 
         CREATE INDEX IF NOT EXISTS idx_card_resident ON card(resident_id);
         CREATE INDEX IF NOT EXISTS idx_log_date ON log(date_time);
+        CREATE INDEX IF NOT EXISTS idx_package_apt ON package(apt);
+        CREATE INDEX IF NOT EXISTS idx_package_status ON package(status);
     ").expect("Failed to create tables");
 }
 
@@ -354,4 +370,194 @@ pub fn search_logs(db: &Connection, search_query: &str) -> Result<Vec<LogData>, 
     query_map.collect::<Result<Vec<_>, _>>()
 }
 
-//Card reader
+// Package Functions
+pub fn add_package(
+    db: &Connection, 
+    apt: &str, 
+    package_number: &str,
+    tracking_number: Option<&str>
+) -> Result<u32, Error> {
+    use chrono::Local;
+    let date_time = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    
+    db.execute(
+        "INSERT INTO package (apt, package_number, tracking_number, date_time, status) 
+         VALUES (?1, ?2, ?3, ?4, 'pending')",
+        rusqlite::params![apt, package_number, tracking_number, date_time],
+    )?;
+    
+    let package_id = db.last_insert_rowid() as u32;
+    
+    // Log the action
+    let log_action = format!(
+        "Package received for Apt {}: {} (Tracking: {})", 
+        apt, 
+        package_number,
+        tracking_number.unwrap_or("N/A")
+    );
+    add_log(db, "package_in", &log_action)?;
+    
+    Ok(package_id)
+}
+
+pub fn get_packages_data(db: &Connection) -> Result<Vec<PackageData>, Error> {
+    let mut query = db.prepare(
+        "SELECT id, apt, package_number, tracking_number, date_time, status 
+         FROM package 
+         WHERE status = 'pending'
+         ORDER BY date_time DESC"
+    )?;
+
+    let query_map = query.query_map([], |row| {
+        Ok(PackageData {
+            id: row.get(0)?,
+            apt: row.get(1)?,
+            package_number: row.get(2)?,
+            tracking_number: row.get(3)?,
+            date_time: row.get(4)?,
+            status: row.get(5)?,
+        })
+    })?;
+
+    query_map.collect::<Result<Vec<_>, _>>()
+}
+
+pub fn convert_package_data_vec(
+    row_data: Vec<PackageData>
+) -> (ModelRc<ModelRc<StandardListViewItem>>, Vec<u32>) {
+    let mut ids = Vec::new();
+
+    let rows: Vec<ModelRc<StandardListViewItem>> = row_data.into_iter().map(|package| {
+        ids.push(package.id);
+
+        let tracking = package.tracking_number.unwrap_or_else(|| "N/A".to_string());
+        
+        let inner_vec = vec![
+            StandardListViewItem::from(Into::<slint::SharedString>::into(package.id.to_string())),
+            StandardListViewItem::from(Into::<slint::SharedString>::into(package.apt)),
+            StandardListViewItem::from(Into::<slint::SharedString>::into(package.package_number)),
+            StandardListViewItem::from(Into::<slint::SharedString>::into(tracking)),
+            StandardListViewItem::from(Into::<slint::SharedString>::into(package.date_time)),
+        ];
+        let inner_model = Rc::new(VecModel::from(inner_vec));
+        ModelRc::new(inner_model)
+    }).collect();
+    
+    let outer_model = Rc::new(VecModel::from(rows));
+    let table_model: ModelRc<ModelRc<StandardListViewItem>> = ModelRc::new(outer_model);
+    (table_model, ids)
+}
+
+pub fn get_package_info(db: &Connection, index: u32) -> Result<PackageData, Error> {
+    let package = db.query_row(
+        "SELECT id, apt, package_number, tracking_number, date_time, status 
+         FROM package WHERE id = ?1",
+        [index],
+        |row| {
+            Ok(PackageData {
+                id: row.get(0)?,
+                apt: row.get(1)?,
+                package_number: row.get(2)?,
+                tracking_number: row.get(3)?,
+                date_time: row.get(4)?,
+                status: row.get(5)?,
+            })
+        },
+    )?;
+    Ok(package)
+}
+
+pub fn collect_package(db: &Connection, package_id: u32, card_hash: &str) -> Result<String, Error> {
+    use chrono::Local;
+    
+    // Verify card and get resident info
+    let resident = db.query_row(
+        "SELECT r.id, r.apt, r.first_name, r.last_name 
+         FROM card c 
+         JOIN resident r ON c.resident_id = r.id
+         WHERE c.hash = ?1",
+        [card_hash],
+        |row| Ok((
+            row.get::<_, u32>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+        ))
+    )?;
+    
+    // Get package info
+    let package = get_package_info(db, package_id)?;
+    
+    // Verify apartment matches
+    if resident.1 != package.apt {
+        return Err(Error::SqliteFailure(
+            rusqlite::ffi::Error::new(1),
+            Some(format!("Package is for Apt {}, but card belongs to Apt {}", package.apt, resident.1))
+        ));
+    }
+    
+    // Mark as collected
+    let collection_time = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    db.execute(
+        "UPDATE package SET status = 'collected', collection_time = ?1 WHERE id = ?2",
+        rusqlite::params![collection_time, package_id],
+    )?;
+    
+    // Log collection
+    let log_action = format!(
+        "Package collected: {} {} (Apt {}) picked up package #{}", 
+        resident.2, resident.3, resident.1, package.package_number
+    );
+    add_log(db, "package_out", &log_action)?;
+    
+    Ok(format!("{} {}", resident.2, resident.3))
+}
+
+pub fn search_packages(db: &Connection, search_query: &str) -> Result<Vec<PackageData>, Error> {
+    let query = format!("%{}%", search_query.to_lowercase());
+    let mut stmt = db.prepare(
+        "SELECT id, apt, package_number, tracking_number, date_time, status 
+         FROM package 
+         WHERE status = 'pending' AND (
+            LOWER(apt) LIKE ?1 
+            OR LOWER(package_number) LIKE ?1 
+            OR LOWER(tracking_number) LIKE ?1
+         )
+         ORDER BY date_time DESC"
+    )?;
+
+    let query_map = stmt.query_map([&query], |row| {
+        Ok(PackageData {
+            id: row.get(0)?,
+            apt: row.get(1)?,
+            package_number: row.get(2)?,
+            tracking_number: row.get(3)?,
+            date_time: row.get(4)?,
+            status: row.get(5)?,
+        })
+    })?;
+
+    query_map.collect::<Result<Vec<_>, _>>()
+}
+
+pub fn get_packages_for_resident(db: &Connection, apt: &str) -> Result<Vec<PackageData>, Error> {
+    let mut query = db.prepare(
+        "SELECT id, apt, package_number, tracking_number, date_time, status 
+         FROM package 
+         WHERE apt = ?1 AND status = 'pending'
+         ORDER BY date_time DESC"
+    )?;
+
+    let query_map = query.query_map([apt], |row| {
+        Ok(PackageData {
+            id: row.get(0)?,
+            apt: row.get(1)?,
+            package_number: row.get(2)?,
+            tracking_number: row.get(3)?,
+            date_time: row.get(4)?,
+            status: row.get(5)?,
+        })
+    })?;
+
+    query_map.collect::<Result<Vec<_>, _>>()
+}
