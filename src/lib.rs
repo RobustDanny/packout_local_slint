@@ -29,9 +29,10 @@ pub struct PackageData {
     pub id: u32,
     pub apt: String,
     pub package_number: String,
-    pub tracking_number: Option<String>,
+    pub barcode: String,  // Changed from tracking_number
+    pub comment: Option<String>,  // NEW: For additional notes
     pub date_time: String,
-    pub status: String, // "pending", "collected", "returned"
+    pub status: String,
 }
 
 pub fn connect_to_db()->Connection{
@@ -72,7 +73,8 @@ fn create_tables(db: &Connection) {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             apt TEXT NOT NULL,
             package_number TEXT NOT NULL,
-            tracking_number TEXT,
+            barcode TEXT NOT NULL,
+            comment TEXT,
             date_time TEXT NOT NULL,
             status TEXT DEFAULT 'pending',
             collection_time TEXT,
@@ -84,6 +86,7 @@ fn create_tables(db: &Connection) {
         CREATE INDEX IF NOT EXISTS idx_log_date ON log(date_time);
         CREATE INDEX IF NOT EXISTS idx_package_apt ON package(apt);
         CREATE INDEX IF NOT EXISTS idx_package_status ON package(status);
+        CREATE INDEX IF NOT EXISTS idx_package_barcode ON package(barcode);
     ").expect("Failed to create tables");
 }
 
@@ -375,25 +378,27 @@ pub fn add_package(
     db: &Connection, 
     apt: &str, 
     package_number: &str,
-    tracking_number: Option<&str>
+    barcode: &str,
+    comment: Option<&str>
 ) -> Result<u32, Error> {
     use chrono::Local;
     let date_time = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
     
     db.execute(
-        "INSERT INTO package (apt, package_number, tracking_number, date_time, status) 
-         VALUES (?1, ?2, ?3, ?4, 'pending')",
-        rusqlite::params![apt, package_number, tracking_number, date_time],
+        "INSERT INTO package (apt, package_number, barcode, comment, date_time, status) 
+         VALUES (?1, ?2, ?3, ?4, ?5, 'pending')",
+        rusqlite::params![apt, package_number, barcode, comment, date_time],
     )?;
     
     let package_id = db.last_insert_rowid() as u32;
     
     // Log the action
     let log_action = format!(
-        "Package received for Apt {}: {} (Tracking: {})", 
-        apt, 
+        "Package #{} received for Apt {}: Barcode {}{}", 
         package_number,
-        tracking_number.unwrap_or("N/A")
+        apt, 
+        barcode,
+        comment.map(|c| format!(" - {}", c)).unwrap_or_default()
     );
     add_log(db, "package_in", &log_action)?;
     
@@ -402,7 +407,7 @@ pub fn add_package(
 
 pub fn get_packages_data(db: &Connection) -> Result<Vec<PackageData>, Error> {
     let mut query = db.prepare(
-        "SELECT id, apt, package_number, tracking_number, date_time, status 
+        "SELECT id, apt, package_number, barcode, comment, date_time, status 
          FROM package 
          WHERE status = 'pending'
          ORDER BY date_time DESC"
@@ -413,9 +418,10 @@ pub fn get_packages_data(db: &Connection) -> Result<Vec<PackageData>, Error> {
             id: row.get(0)?,
             apt: row.get(1)?,
             package_number: row.get(2)?,
-            tracking_number: row.get(3)?,
-            date_time: row.get(4)?,
-            status: row.get(5)?,
+            barcode: row.get(3)?,
+            comment: row.get(4)?,
+            date_time: row.get(5)?,
+            status: row.get(6)?,
         })
     })?;
 
@@ -430,14 +436,17 @@ pub fn convert_package_data_vec(
     let rows: Vec<ModelRc<StandardListViewItem>> = row_data.into_iter().map(|package| {
         ids.push(package.id);
 
-        let tracking = package.tracking_number.unwrap_or_else(|| "N/A".to_string());
+        let comment_display = package.comment
+            .as_ref()
+            .map(|c| c.as_str())
+            .unwrap_or("");
         
         let inner_vec = vec![
             StandardListViewItem::from(Into::<slint::SharedString>::into(package.id.to_string())),
             StandardListViewItem::from(Into::<slint::SharedString>::into(package.apt)),
             StandardListViewItem::from(Into::<slint::SharedString>::into(package.package_number)),
-            StandardListViewItem::from(Into::<slint::SharedString>::into(tracking)),
-            StandardListViewItem::from(Into::<slint::SharedString>::into(package.date_time)),
+            StandardListViewItem::from(Into::<slint::SharedString>::into(package.barcode)),
+            StandardListViewItem::from(Into::<slint::SharedString>::into(comment_display)),
         ];
         let inner_model = Rc::new(VecModel::from(inner_vec));
         ModelRc::new(inner_model)
@@ -450,7 +459,7 @@ pub fn convert_package_data_vec(
 
 pub fn get_package_info(db: &Connection, index: u32) -> Result<PackageData, Error> {
     let package = db.query_row(
-        "SELECT id, apt, package_number, tracking_number, date_time, status 
+        "SELECT id, apt, package_number, barcode, comment, date_time, status 
          FROM package WHERE id = ?1",
         [index],
         |row| {
@@ -458,9 +467,10 @@ pub fn get_package_info(db: &Connection, index: u32) -> Result<PackageData, Erro
                 id: row.get(0)?,
                 apt: row.get(1)?,
                 package_number: row.get(2)?,
-                tracking_number: row.get(3)?,
-                date_time: row.get(4)?,
-                status: row.get(5)?,
+                barcode: row.get(3)?,
+                comment: row.get(4)?,
+                date_time: row.get(5)?,
+                status: row.get(6)?,
             })
         },
     )?;
@@ -516,12 +526,13 @@ pub fn collect_package(db: &Connection, package_id: u32, card_hash: &str) -> Res
 pub fn search_packages(db: &Connection, search_query: &str) -> Result<Vec<PackageData>, Error> {
     let query = format!("%{}%", search_query.to_lowercase());
     let mut stmt = db.prepare(
-        "SELECT id, apt, package_number, tracking_number, date_time, status 
+        "SELECT id, apt, package_number, barcode, comment, date_time, status 
          FROM package 
          WHERE status = 'pending' AND (
             LOWER(apt) LIKE ?1 
             OR LOWER(package_number) LIKE ?1 
-            OR LOWER(tracking_number) LIKE ?1
+            OR LOWER(barcode) LIKE ?1
+            OR LOWER(comment) LIKE ?1
          )
          ORDER BY date_time DESC"
     )?;
@@ -531,9 +542,10 @@ pub fn search_packages(db: &Connection, search_query: &str) -> Result<Vec<Packag
             id: row.get(0)?,
             apt: row.get(1)?,
             package_number: row.get(2)?,
-            tracking_number: row.get(3)?,
-            date_time: row.get(4)?,
-            status: row.get(5)?,
+            barcode: row.get(3)?,
+            comment: row.get(4)?,
+            date_time: row.get(5)?,
+            status: row.get(6)?,
         })
     })?;
 
@@ -542,20 +554,21 @@ pub fn search_packages(db: &Connection, search_query: &str) -> Result<Vec<Packag
 
 pub fn get_packages_for_resident(db: &Connection, apt: &str) -> Result<Vec<PackageData>, Error> {
     let mut query = db.prepare(
-        "SELECT id, apt, package_number, tracking_number, date_time, status 
+        "SELECT id, apt, package_number, barcode, comment, date_time, status 
          FROM package 
          WHERE apt = ?1 AND status = 'pending'
          ORDER BY date_time DESC"
     )?;
 
-    let query_map = query.query_map([apt], |row| {
+    let query_map = query.query_map([apt], |row| {  // Changed from stmt to query
         Ok(PackageData {
             id: row.get(0)?,
             apt: row.get(1)?,
             package_number: row.get(2)?,
-            tracking_number: row.get(3)?,
-            date_time: row.get(4)?,
-            status: row.get(5)?,
+            barcode: row.get(3)?,
+            comment: row.get(4)?,
+            date_time: row.get(5)?,
+            status: row.get(6)?,
         })
     })?;
 

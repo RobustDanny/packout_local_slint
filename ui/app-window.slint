@@ -32,27 +32,123 @@ struct PackageData {
     id: int,
     apt: string,
     package_number: string,
-    tracking_number: string,
+    barcode: string,
+    comment: string,
     date_time: string,
 }
 
-component CardItem inherits ElevatedCard {
+component ModernCard inherits Rectangle {
     in property <string> title;
     in property <string> content;
+    in property <color> accent: #3B82F6;
 
+    border-radius: 16px;
+    background: white;
+    drop-shadow-blur: 16px;
+    drop-shadow-color: #00000008;
+    
     VerticalBox {
-        padding: 10px;
+        padding: 24px;
+        spacing: 8px;
+        
         Text {
-            font-weight: 700;
+            font-weight: 600;
+            font-size: 14px;
             text: title;
+            color: #1F2937;
         }
         Text {
             text: content;
+            color: #6B7280;
+            font-size: 14px;
+        }
+    }
+}
+
+component ModernButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary: true;
+    in property <bool> enabled: true;
+    callback clicked;
+    
+    width: 120px;
+    height: 44px;
+    border-radius: 12px;
+    background: primary ? (touch.pressed ? #2563EB : (touch.has-hover ? #3B82F6 : #3B82F6)) : 
+                (touch.pressed ? #F3F4F6 : (touch.has-hover ? #E5E7EB : #F9FAFB));
+    
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+    
+    HorizontalBox {
+        alignment: center;
+        Text {
+            text: root.text;
+            color: primary ? white : #374151;
+            font-size: 14px;
+            font-weight: 600;
+        }
+    }
+}
+
+component ModernInput inherits Rectangle {
+    in property <string> placeholder;
+    in-out property <string> text;
+    callback edited(string);
+    callback accepted(string);
+    
+    height: 48px;
+    border-radius: 12px;
+    background: white;
+    border-width: 2px;
+    border-color: input.has-focus ? #3B82F6 : #E5E7EB;
+    
+    input := LineEdit {
+        placeholder-text: placeholder;
+        text <=> root.text;
+        font-size: 14px;
+        edited(t) => { root.edited(t); }
+        accepted(t) => { root.accepted(t); }
+    }
+}
+
+component Badge inherits Rectangle {
+    in property <string> text;
+    in property <color> bg: #DBEAFE;
+    in property <color> fg: #1E40AF;
+    
+    height: 28px;
+    border-radius: 14px;
+    background: bg;
+    
+    HorizontalBox {
+        padding-left: 12px;
+        padding-right: 12px;
+        alignment: center;
+        
+        Text {
+            text: root.text;
+            color: fg;
+            font-size: 12px;
+            font-weight: 600;
         }
     }
 }
 
 export component AppWindow inherits MaterialWindow {
+
+    in-out property <[PackageData]> unassigned_packages: [];
+    in-out property <int> scan_count: 0;
+    in-out property <bool> show_assign_mode: false;
+    in-out property <int> selected_package_index: -1;
+    in-out property <string> current_apt: "";
+    in-out property <string> individual_apt: "";
+    in-out property <string> individual_comment: "";
+    in-out property <int> package_sequence: 1;
+    in-out property <string> scanned_barcode: "";
+    in-out property <bool> scanning_active: false;
 
     out property <bool> show_resident_form: false;
     out property <bool> show_link_card_form: false;
@@ -88,7 +184,8 @@ export component AppWindow inherits MaterialWindow {
     in-out property <PackageData> package: {
         apt: "",
         package_number: "",
-        tracking_number: "",
+        barcode: "",
+        comment: "",
         date_time: "",
     };
     
@@ -96,7 +193,8 @@ export component AppWindow inherits MaterialWindow {
         id: 0,
         apt: "",
         package_number: "",
-        tracking_number: "",
+        barcode: "",
+        comment: "",
         date_time: "",
     };
 
@@ -146,6 +244,13 @@ export component AppWindow inherits MaterialWindow {
     in-out property <[[StandardListViewItem]]> packages_data: [[]];
     in-out property <int> package_count: 0;
     
+    callback quick_scan_package(string, string);  // barcode, comment
+    callback assign_apartment_to_package(int, string);  // index, apartment
+    callback assign_comment_to_package(int, string);  // index, comment
+    callback bulk_assign_apartment(string);  // Assign to all unassigned
+    callback save_assigned_packages();  // Save all to database
+    callback clear_scanned_packages();
+
     callback add_package(PackageData);
     callback show_packages_data();
     callback show_one_package_info(int);
@@ -183,6 +288,7 @@ export component AppWindow inherits MaterialWindow {
     default-font-family: "Montserrat";
     default-font-size: 13px;
     default-font-weight: 700;
+    full-screen: true;
 
     // Info Alert
     if info_alert != "" : Rectangle {
@@ -623,93 +729,206 @@ export component AppWindow inherits MaterialWindow {
         }
     }
 
-    // Add Package Form
     ElevatedCard {
-        visible: root.show_package_form;
-        width: 450px;
+        visible: root.show_package_form && !root.show_assign_mode;
+        width: 700px;
         height: 750px;
         z: 1;
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
         
-        VerticalBox {
+        VerticalLayout {
             padding: 30px;
-            spacing: 20px;
-            alignment: center;
+            spacing: 15px;
             
-            Text { 
-                text: "Add New Package";
-                font-size: 20px;
-                font-weight: 700;
-            }
-            
-            Rectangle {
-                height: 1px;
-                background: #E0E0E0;
-            }
-            
-            VerticalBox {
-                spacing: 15px;
+            // Header with counter
+            HorizontalLayout {
+                alignment: space-between;
                 
-                VerticalBox {
-                    spacing: 8px;
-                    Text {
-                        text: "Apartment Number:";
+                VerticalLayout {
+                    spacing: 5px;
+                    Text { 
+                        text: "⚡ Quick Scan Mode";
+                        font-size: 24px;
                         font-weight: 700;
-                        font-size: 14px;
-                    }
-                    LineEdit {
-                        placeholder-text: "e.g., 101";
-                        height: 45px;
-                        edited(new_text) => {
-                            package.apt = new_text;
-                        }
-                    }
-                }
-                
-                VerticalBox {
-                    spacing: 8px;
-                    Text {
-                        text: "Package Number:";
-                        font-weight: 700;
-                        font-size: 14px;
-                    }
-                    LineEdit {
-                        placeholder-text: "e.g., 1, 2, 3...;";
-                        height: 45px;
-                        edited(new_text) => {
-                            package.package_number = new_text;
-                        }
-                    }
-                }
-                
-                VerticalBox {
-                    spacing: 8px;
-                    HorizontalBox {
-                        Text {
-                            text: "Tracking Number (Optional):";
-                            font-weight: 700;
-                            font-size: 14px;
-                        }
-                        Text {
-                            text: "Scan barcode";
-                            font-size: 12px;
-                            color: #666;
-                        }
-                    }
-                    LineEdit {
-                        placeholder-text: "Click here and scan barcode...";
-                        height: 45px;
-                        edited(new_text) => {
-                            package.tracking_number = new_text;
-                        }
+                        color: #FF6F00;
                     }
                     Text {
-                        text: "Tip: Click in the field above, then scan with your barcode reader";
-                        font-size: 11px;
+                        text: "Scan all packages first, assign apartments later";
+                        font-size: 13px;
                         color: #666;
-                        wrap: word-wrap;
                     }
+                }
+                
+                Rectangle {
+                    width: 120px;
+                    height: 60px;
+                    border-radius: 12px;
+                    background: #4CAF50;
+                    
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 5px;
+                        
+                        Text {
+                            text: root.scan_count;
+                            font-size: 32px;
+                            font-weight: 700;
+                            color: white;
+                        }
+                        Text {
+                            text: "Scanned";
+                            font-size: 11px;
+                            color: white;
+                        }
+                    }
+                }
+            }
+            
+            Rectangle {
+                height: 2px;
+                background: #E0E0E0;
+            }
+            
+            // Large Scanning Area
+            Rectangle {
+                height: 150px;
+                border-radius: 16px;
+                background: #E3F2FD;
+                border-width: 4px;
+                border-color: #2196F3;
+                
+                VerticalLayout {
+                    padding: 20px;
+                    spacing: 15px;
+                    alignment: center;
+                    
+                    Text {
+                        text: "🔦 SCAN BARCODE";
+                        font-size: 20px;
+                        font-weight: 700;
+                        color: #1976D2;
+                    }
+                    
+                    LineEdit {
+                        placeholder-text: "Click here and scan continuously...";
+                        text <=> root.scanned_barcode;
+                        height: 60px;
+                        font-size: 20px;
+                        accepted(text) => {
+                            if (text != "") {
+                                // Get current comment (if any)
+                                let comment = package.comment;
+                                
+                                // Auto-save scanned package
+                                quick_scan_package(text, comment);
+                                
+                                // Increment counter
+                                root.scan_count = root.scan_count + 1;
+                                
+                                // Clear barcode field immediately
+                                root.scanned_barcode = "";
+                                
+                                // Clear comment field ONLY if it was used
+                                if (comment != "") {
+                                    package.comment = "";
+                                }
+                            }
+                        }
+                    }
+                    
+                    HorizontalLayout {
+                        spacing: 15px;
+                        alignment: center;
+                        
+                        Text {
+                            text: "💡 Scan → Auto-adds → Keep scanning!";
+                            font-size: 12px;
+                            color: #1976D2;
+                            font-weight: 700;
+                        }
+                        
+                        Text {
+                            text: "Comment applies to NEXT scan";
+                            font-size: 12px;
+                            color: #FF6F00;
+                            font-weight: 700;
+                        }
+                    }
+                }
+            }
+            
+            // Optional Comment Field
+            VerticalLayout {
+                spacing: 8px;
+                
+                HorizontalLayout {
+                    spacing: 10px;
+                    alignment: space-between;
+                    
+                    Text {
+                        text: "📝 Add Note for NEXT Package:";
+                        font-weight: 700;
+                        font-size: 14px;
+                        color: #FF6F00;
+                    }
+                    
+                    if package.comment != "" : Rectangle {
+                        height: 40px;
+                        border-radius: 8px;
+                        background: #FFF3E0;
+                        border-width: 2px;
+                        border-color: #FF9800;
+                        
+                        HorizontalLayout {
+                            padding: 10px;
+                            spacing: 10px;
+                            alignment: center;
+                            
+                            Text {
+                                text: "⚡ Next scan will include:";
+                                font-size: 11px;
+                                color: #E65100;
+                                font-weight: 700;
+                            }
+                            
+                            Text {
+                                text: "\"" + package.comment + "\"";
+                                font-size: 11px;
+                                color: #F57F17;
+                            }
+                        }
+                    }
+                }
+                
+                HorizontalLayout {
+                    spacing: 10px;
+                    
+                    LineEdit {
+                        placeholder-text: "e.g., Fragile, Large, Heavy...";
+                        text: package.comment;
+                        height: 45px;
+                        edited(new_text) => {
+                            package.comment = new_text;
+                        }
+                    }
+                    
+                    FilledButton {
+                        text: "Clear";
+                        width: 80px;
+                        height: 45px;
+                        visible: package.comment != "";
+                        clicked() => {
+                            package.comment = "";
+                        }
+                    }
+                }
+                
+                Text {
+                    text: "💡 Type comment BEFORE scanning the package that needs it";
+                    font-size: 10px;
+                    color: #FF6F00;
+                    font-weight: 700;
                 }
             }
             
@@ -718,62 +937,518 @@ export component AppWindow inherits MaterialWindow {
                 background: #E0E0E0;
             }
             
-            VerticalBox {
+            // Scanned packages list preview
+            VerticalLayout {
                 spacing: 10px;
                 
-                Text {
-                    text: "Instructions:";
-                    font-weight: 700;
-                    font-size: 14px;
+                HorizontalLayout {
+                    alignment: space-between;
+                    
+                    Text {
+                        text: "📋 Scanned Packages:";
+                        font-weight: 700;
+                        font-size: 14px;
+                    }
+                    
+                    if root.scan_count > 0 : Text {
+                        text: root.scan_count + " packages ready";
+                        font-size: 12px;
+                        color: #4CAF50;
+                        font-weight: 700;
+                    }
                 }
                 
-                Text {
-                    text: "1. Enter apartment number";
-                    font-size: 12px;
-                }
-                
-                Text {
-                    text: "2. Enter package sequence number";
-                    font-size: 12px;
-                }
-                
-                Text {
-                    text: "3. Scan barcode or manually enter tracking";
-                    font-size: 12px;
+                ScrollView {
+                    height: 200px;
+                    
+                    VerticalLayout {
+                        spacing: 8px;
+                        
+                        if root.scan_count == 0 : Rectangle {
+                            height: 100px;
+                            VerticalLayout {
+                                alignment: center;
+                                Text {
+                                    text: "No packages scanned yet";
+                                    color: #999;
+                                    font-size: 14px;
+                                }
+                                Text {
+                                    text: "Click in the blue field above and start scanning!";
+                                    color: #BBB;
+                                    font-size: 12px;
+                                }
+                            }
+                        }
+                        
+                        // List of scanned packages
+                        for pkg[index] in unassigned_packages : Rectangle {
+                            height: 50px;
+                            border-radius: 8px;
+                            background: #F5F5F5;
+                            border-width: 1px;
+                            border-color: #E0E0E0;
+                            
+                            HorizontalLayout {
+                                padding: 12px;
+                                spacing: 15px;
+                                alignment: space-between;
+                                
+                                HorizontalLayout {
+                                    spacing: 15px;
+                                    
+                                    Text {
+                                        text: "#" + (index + 1);
+                                        font-weight: 700;
+                                        color: #2196F3;
+                                        width: 40px;
+                                    }
+                                    
+                                    Text {
+                                        text: pkg.barcode;
+                                        font-family: "monospace";
+                                        font-size: 12px;
+                                    }
+                                    
+                                    if pkg.comment != "" : Rectangle {
+                                        height: 24px;
+                                        border-radius: 12px;
+                                        background: #FFF9C4;
+                                        HorizontalLayout {
+                                            padding-left: 10px;
+                                            padding-right: 10px;
+                                            alignment: center;
+                                            Text {
+                                                text: pkg.comment;
+                                                font-size: 10px;
+                                                color: #F57F17;
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                Text {
+                                    text: "⏳ Unassigned";
+                                    font-size: 11px;
+                                    color: #FF9800;
+                                }
+                            }
+                        }
+                    }
                 }
             }
             
-            Rectangle {
-                height: 10px;
-            }
-            
-            HorizontalBox {
-                alignment: center;
+            // Bottom Actions
+            HorizontalLayout {
+                alignment: space-between;
                 spacing: 15px;
                 
                 FilledButton {
+                    text: "Clear All";
+                    width: 120px;
                     height: 50px;
-                    width: 150px;
-                    text: "Add Package";
-                    enabled: package.apt != "" && package.package_number != "";
+                    visible: root.scan_count > 0;
                     clicked() => {
-                        add_package(package);
-                        root.show_package_form = false;
-                        package.apt = "";
-                        package.package_number = "";
-                        package.tracking_number = "";
+                        clear_scanned_packages();
+                        root.scan_count = 0;
+                    }
+                }
+                
+                HorizontalLayout {
+                    spacing: 10px;
+                    
+                    FilledButton {
+                        text: "Next: Assign Apartments →";
+                        width: 220px;
+                        height: 50px;
+                        enabled: root.scan_count > 0;
+                        clicked() => {
+                            root.show_assign_mode = true;
+                        }
+                    }
+                    
+                    FilledButton {
+                        text: "Cancel";
+                        width: 100px;
+                        height: 50px;
+                        clicked() => {
+                            root.show_package_form = false;
+                            clear_scanned_packages();
+                            root.scan_count = 0;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // STEP 2: Assignment Mode - Assign apartments to scanned packages
+    ElevatedCard {
+        visible: root.show_package_form && root.show_assign_mode;
+        width: 900px;
+        height: 700px;
+        z: 1;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        
+        VerticalLayout {
+            padding: 30px;
+            spacing: 20px;
+            
+            // Header
+            HorizontalLayout {
+                alignment: space-between;
+                
+                VerticalLayout {
+                    spacing: 5px;
+                    Text { 
+                        text: "📍 Assign Apartments";
+                        font-size: 24px;
+                        font-weight: 700;
+                        color: #1976D2;
+                    }
+                    Text {
+                        text: "Assign apartment numbers to scanned packages";
+                        font-size: 13px;
+                        color: #666;
                     }
                 }
                 
                 FilledButton {
-                    height: 50px;
-                    width: 150px;
-                    text: "Cancel";
+                    text: "← Back to Scanning";
+                    width: 180px;
+                    height: 45px;
                     clicked() => {
-                        root.show_package_form = false;
-                        package.apt = "";
-                        package.package_number = "";
-                        package.tracking_number = "";
+                        root.show_assign_mode = false;
+                    }
+                }
+            }
+            
+            Rectangle {
+                height: 2px;
+                background: #E0E0E0;
+            }
+            
+            HorizontalLayout {
+                spacing: 30px;
+                alignment: stretch;
+                
+                // Left: Package List
+                VerticalLayout {
+                    width: 500px;
+                    spacing: 15px;
+                    
+                    Text {
+                        text: "Packages (" + root.scan_count + ")";
+                        font-weight: 700;
+                        font-size: 16px;
+                    }
+                    
+                    ScrollView {
+                        height: 500px;
+                        
+                        VerticalLayout {
+                            spacing: 10px;
+                            
+                            for pkg[index] in unassigned_packages : Rectangle {
+                                height: 80px;
+                                border-radius: 10px;
+                                background: pkg.apt == "" ? #FFEBEE : #E8F5E9;
+                                border-width: 2px;
+                                border-color: pkg.apt == "" ? #FF5252 : #4CAF50;
+                                
+                                TouchArea {
+                                    clicked => {
+                                        root.selected_package_index = index;
+                                    }
+                                }
+                                
+                                VerticalLayout {
+                                    padding: 12px;
+                                    spacing: 8px;
+                                    
+                                    HorizontalLayout {
+                                        alignment: space-between;
+                                        
+                                        Text {
+                                            text: "Package #" + (index + 1);
+                                            font-weight: 700;
+                                            font-size: 14px;
+                                        }
+                                        
+                                        if pkg.apt == "" : Rectangle {
+                                            width: 100px;
+                                            height: 24px;
+                                            border-radius: 12px;
+                                            background: #FF5252;
+                                            HorizontalLayout {
+                                                alignment: center;
+                                                Text {
+                                                    text: "⏳ Pending";
+                                                    color: white;
+                                                    font-size: 11px;
+                                                    font-weight: 700;
+                                                }
+                                            }
+                                        }
+                                        
+                                        if pkg.apt != "" : Rectangle {
+                                            width: 100px;
+                                            height: 24px;
+                                            border-radius: 12px;
+                                            background: #4CAF50;
+                                            HorizontalLayout {
+                                                alignment: center;
+                                                Text {
+                                                    text: "✓ Apt " + pkg.apt;
+                                                    color: white;
+                                                    font-size: 11px;
+                                                    font-weight: 700;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    
+                                    Text {
+                                        text: pkg.barcode;
+                                        font-family: "monospace";
+                                        font-size: 12px;
+                                        color: #666;
+                                    }
+                                    
+                                    if pkg.comment != "" : Text {
+                                        text: "📝 " + pkg.comment;
+                                        font-size: 11px;
+                                        color: #999;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Right: Assignment Panel
+                VerticalLayout {
+                    spacing: 20px;
+                    
+                    // Bulk Assignment
+                    ElevatedCard {
+                        VerticalLayout {
+                            padding: 20px;
+                            spacing: 15px;
+                            
+                            Text {
+                                text: "🚀 Quick Assign";
+                                font-weight: 700;
+                                font-size: 16px;
+                            }
+                            
+                            Text {
+                                text: "Assign same apartment to all packages:";
+                                font-size: 12px;
+                                color: #666;
+                            }
+                            
+                            HorizontalLayout {
+                                spacing: 10px;
+                                
+                                LineEdit {
+                                    placeholder-text: "Enter apartment";
+                                    text: root.current_apt;
+                                    height: 50px;
+                                    font-size: 18px;
+                                    edited(new_text) => {
+                                        root.current_apt = new_text;
+                                    }
+                                }
+                                
+                                FilledButton {
+                                    text: "Assign All";
+                                    width: 120px;
+                                    height: 50px;
+                                    enabled: root.current_apt != "";
+                                    clicked() => {
+                                        bulk_assign_apartment(root.current_apt);
+                                        root.current_apt = "";
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Individual Assignment
+                    ElevatedCard {
+                        VerticalLayout {
+                            padding: 20px;
+                            spacing: 15px;
+                            
+                            Text {
+                                text: "📍 Assign Individual";
+                                font-weight: 700;
+                                font-size: 16px;
+                            }
+                            
+                            if root.selected_package_index >= 0 : VerticalLayout {
+                                spacing: 10px;
+                                
+                                Text {
+                                    text: "Selected: Package #" + (root.selected_package_index + 1);
+                                    font-size: 12px;
+                                    color: #666;
+                                }
+                                
+                                VerticalLayout {
+                                    spacing: 10px;
+                                    
+                                    Text {
+                                        text: "Apartment:";
+                                        font-size: 11px;
+                                        font-weight: 700;
+                                    }
+                                    
+                                    HorizontalLayout {
+                                        spacing: 10px;
+                                        
+                                        LineEdit {
+                                            placeholder-text: "Enter apartment";
+                                            text <=> root.individual_apt;
+                                            height: 45px;
+                                            font-size: 16px;
+                                            // Handle Enter key press
+                                            accepted(text) => {
+                                                if text != "" && root.selected_package_index >= 0 {
+                                                    root.assign_apartment_to_package(root.selected_package_index, text);
+                                                    root.individual_apt = "";
+                                                }
+                                            }
+                                        }
+                                        
+                                        FilledButton {
+                                            text: "Set";
+                                            width: 80px;
+                                            height: 45px;
+                                            enabled: root.individual_apt != "" && root.selected_package_index >= 0;
+                                            clicked() => {
+                                                if root.individual_apt != "" && root.selected_package_index >= 0 {
+                                                    // Direct callback invocation
+                                                    root.assign_apartment_to_package(root.selected_package_index, root.individual_apt);
+                                                    root.individual_apt = "";
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                VerticalLayout {
+                                    spacing: 10px;
+                                    
+                                    Text {
+                                        text: "Comment (optional):";
+                                        font-size: 11px;
+                                        font-weight: 700;
+                                    }
+                                    
+                                    HorizontalLayout {
+                                        spacing: 10px;
+                                        
+                                        LineEdit {
+                                            placeholder-text: "Add/edit comment";
+                                            text <=> root.individual_comment;
+                                            height: 45px;
+                                            // Handle Enter key press
+                                            accepted(text) => {
+                                                if root.selected_package_index >= 0 {
+                                                    root.assign_comment_to_package(root.selected_package_index, text);
+                                                    root.individual_comment = "";
+                                                }
+                                            }
+                                        }
+                                        
+                                        FilledButton {
+                                            text: "Set";
+                                            width: 80px;
+                                            height: 45px;
+                                            enabled: root.selected_package_index >= 0;
+                                            clicked() => {
+                                                if root.selected_package_index >= 0 {
+                                                    // Direct callback invocation
+                                                    root.assign_comment_to_package(root.selected_package_index, root.individual_comment);
+                                                    root.individual_comment = "";
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                FilledButton {
+                                    text: "✓ Done with this package";
+                                    width: 100%;
+                                    height: 40px;
+                                    clicked() => {
+                                        root.selected_package_index = -1;
+                                        root.individual_apt = "";
+                                        root.individual_comment = "";
+                                    }
+                                }
+                            }
+                            
+                            if root.selected_package_index < 0 : VerticalLayout {
+                                spacing: 10px;
+                                alignment: center;
+                                
+                                Rectangle {
+                                    height: 100px;
+                                    VerticalLayout {
+                                        alignment: center;
+                                        spacing: 10px;
+                                        
+                                        Text {
+                                            text: "👈 Click a package";
+                                            font-size: 18px;
+                                            color: #999;
+                                        }
+                                        
+                                        Text {
+                                            text: "Select a package from the list to assign apartment";
+                                            font-size: 12px;
+                                            color: #BBB;
+                                            horizontal-alignment: center;
+                                            wrap: word-wrap;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Completion
+                    ElevatedCard {
+                        VerticalLayout {
+                            padding: 20px;
+                            spacing: 15px;
+                            alignment: center;
+                            
+                            Text {
+                                text: "✅ Complete Assignment";
+                                font-weight: 700;
+                                font-size: 16px;
+                            }
+                            
+                            FilledButton {
+                                text: "Save All Packages";
+                                width: 200px;
+                                height: 55px;
+                                clicked() => {
+                                    // Save all assigned packages to database
+                                    save_assigned_packages();
+                                    
+                                    // Close forms and reset
+                                    root.show_package_form = false;
+                                    root.show_assign_mode = false;
+                                    root.scan_count = 0;
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -859,7 +1534,7 @@ export component AppWindow inherits MaterialWindow {
                         width: 150px;
                     }
                     Text {
-                        text: package_info.tracking_number != "" ? package_info.tracking_number : "N/A";
+                        text: package_info.comment != "" ? package_info.comment : "N/A";
                         font-size: 12px;
                         font-family: "monospace";
                         color: #666;
@@ -1633,8 +2308,13 @@ export component AppWindow inherits MaterialWindow {
                                 root.inventory = false;
                                 show_card_data();
                             } else if (index == 2) {
+                                // Packages tab
                                 table_columns = [
-                                    {title: "ID"}, {title: "Apt"}, {title: "Pkg #"}, {title: "Tracking"}, {title: "Received"}
+                                    {title: "ID"},
+                                    {title: "Apt"},
+                                    {title: "Pkg #"},
+                                    {title: "Barcode"},
+                                    {title: "Comment"}
                                 ];
                                 root.current_tab = index;
                                 root.inventory = false;

@@ -3,7 +3,7 @@
 use std::{error::Error, rc::Rc, cell::RefCell, sync::{Arc, Mutex}};
 use slint_rust_template::*;
 use chrono::Local;
-use slint::VecModel;
+use slint::{VecModel, Model};
 
 mod nfc_reader;
 use nfc_reader::{NFCReader, NFCCardData};
@@ -20,6 +20,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let card_ids: Rc<RefCell<Vec<u32>>> = Rc::new(RefCell::new(Vec::new()));
     let log_ids: Rc<RefCell<Vec<u32>>> = Rc::new(RefCell::new(Vec::new()));
     let package_ids: Rc<RefCell<Vec<u32>>> = Rc::new(RefCell::new(Vec::new()));
+    let unassigned_packages: Rc<RefCell<Vec<(String, String, String)>>> = Rc::new(RefCell::new(Vec::new()));
     
     // Flag to pause automatic verification during card linking
     let verification_paused = Arc::new(Mutex::new(false));
@@ -70,6 +71,282 @@ fn main() -> Result<(), Box<dyn Error>> {
             Err(e) => println!("No NFC readers found: {}", e),
         }
     }
+
+    ui.on_quick_scan_package({
+        let ui_handle = ui.as_weak();
+        let unassigned = Rc::clone(&unassigned_packages);
+        
+        move |barcode: slint::SharedString, comment: slint::SharedString| {
+            let ui = ui_handle.unwrap();
+            
+            // Store temporarily with empty apartment
+            unassigned.borrow_mut().push((
+                barcode.to_string(),
+                comment.to_string(),
+                String::new()  // Empty apartment initially
+            ));
+            
+            // Convert to Slint model for display
+            let packages: Vec<PackageData> = unassigned.borrow()
+                .iter()
+                .enumerate()
+                .map(|(idx, (bc, cmt, apt))| PackageData {
+                    id: (idx + 1) as i32,
+                    apt: apt.clone().into(),
+                    package_number: (idx + 1).to_string().into(),
+                    barcode: bc.clone().into(),
+                    comment: cmt.clone().into(),
+                    date_time: "".into(),
+                })
+                .collect();
+            
+            let model = Rc::new(VecModel::from(packages));
+            ui.set_unassigned_packages(slint::ModelRc::from(model));
+            
+            println!("📦 Scanned: {} (Total: {})", barcode, unassigned.borrow().len());
+        }
+    });
+    
+    // Assign comment to single package
+    ui.on_assign_comment_to_package({
+        let ui_handle = ui.as_weak();
+        let unassigned = Rc::clone(&unassigned_packages);
+        
+        move |index: i32, comment: slint::SharedString| {
+            println!("\n=== ASSIGN COMMENT ===");
+            println!("Index: {}", index);
+            println!("Comment: '{}'", comment);
+            
+            if index < 0 {
+                println!("ERROR: Invalid index {}", index);
+                return;
+            }
+            
+            let ui = ui_handle.unwrap();
+            
+            let mut packages = unassigned.borrow_mut();
+            
+            if index as usize >= packages.len() {
+                println!("ERROR: Index {} out of bounds", index);
+                return;
+            }
+            
+            if let Some(pkg) = packages.get_mut(index as usize) {
+                println!("  Before: comment='{}'", pkg.1);
+                pkg.1 = comment.to_string();
+                println!("  After:  comment='{}'", pkg.1);
+            }
+            drop(packages);
+            
+            // Refresh UI
+            let packages: Vec<PackageData> = unassigned.borrow()
+                .iter()
+                .enumerate()
+                .map(|(idx, (bc, cmt, apt))| PackageData {
+                    id: (idx + 1) as i32,
+                    apt: apt.clone().into(),
+                    package_number: (idx + 1).to_string().into(),
+                    barcode: bc.clone().into(),
+                    comment: cmt.clone().into(),
+                    date_time: "".into(),
+                })
+                .collect();
+            
+            let model = Rc::new(VecModel::from(packages));
+            ui.set_unassigned_packages(slint::ModelRc::from(model));
+            
+            // Keep selection active
+            ui.set_selected_package_index(index);
+            
+            println!("✅ Comment updated for #{}", index + 1);
+            println!("==================\n");
+        }
+    });
+
+    // Assign apartment to single package
+    // Assign apartment to single package
+    ui.on_assign_apartment_to_package({
+        let ui_handle = ui.as_weak();
+        let unassigned = Rc::clone(&unassigned_packages);
+        
+        move |index: i32, apt: slint::SharedString| {
+            println!("\n=== RUST: ASSIGN APARTMENT CALLBACK ===");
+            println!("Received - Index: {}, Apartment: '{}'", index, apt);
+            
+            if index < 0 {
+                println!("ERROR: Invalid index");
+                return;
+            }
+            
+            if apt.is_empty() {
+                println!("ERROR: Empty apartment");
+                return;
+            }
+            
+            let ui = ui_handle.unwrap();
+            
+            // Get current model from UI
+            let packages_model = ui.get_unassigned_packages();
+            
+            // Update the specific package in the model
+            if let Some(mut pkg) = packages_model.row_data(index as usize) {
+                println!("  Found package: barcode={}, old_apt={}", pkg.barcode, pkg.apt);
+                
+                // Update apartment
+                pkg.apt = apt.clone();
+                
+                // Update in the model
+                packages_model.set_row_data(index as usize, pkg.clone());
+                
+                println!("  Updated to: apt={}", pkg.apt);
+                
+                // Also update backend storage
+                let mut packages = unassigned.borrow_mut();
+                if let Some(backend_pkg) = packages.get_mut(index as usize) {
+                    backend_pkg.2 = apt.to_string();
+                    println!("  Backend updated: {}", backend_pkg.2);
+                }
+                
+                // Clear input field
+                ui.set_individual_apt("".into());
+                
+                println!("✅ SUCCESS: Package #{} assigned to Apt {}", index + 1, apt);
+            } else {
+                println!("ERROR: Could not find package at index {}", index);
+            }
+            
+            println!("=======================================\n");
+        }
+    });
+    
+    // Bulk assign apartment to all packages
+    ui.on_bulk_assign_apartment({
+        let ui_handle = ui.as_weak();
+        let unassigned = Rc::clone(&unassigned_packages);
+        
+        move |apt: slint::SharedString| {
+            println!("\n=== BULK ASSIGN ===");
+            println!("Apartment: '{}'", apt);
+            
+            let ui = ui_handle.unwrap();
+            
+            let mut packages = unassigned.borrow_mut();
+            let count = packages.len();
+            
+            for pkg in packages.iter_mut() {
+                pkg.2 = apt.to_string();
+            }
+            drop(packages);
+            
+            // Refresh UI
+            let packages: Vec<PackageData> = unassigned.borrow()
+                .iter()
+                .enumerate()
+                .map(|(idx, (bc, cmt, apt))| PackageData {
+                    id: (idx + 1) as i32,
+                    apt: apt.clone().into(),
+                    package_number: (idx + 1).to_string().into(),
+                    barcode: bc.clone().into(),
+                    comment: cmt.clone().into(),
+                    date_time: "".into(),
+                })
+                .collect();
+            
+            let model = Rc::new(VecModel::from(packages));
+            ui.set_unassigned_packages(slint::ModelRc::from(model));
+            
+            println!("✅ {} packages → Apt {}", count, apt);
+            println!("==================\n");
+        }
+    });
+    
+    // Save all packages to database
+    ui.on_save_assigned_packages({
+        let ui_handle = ui.as_weak();
+        let db = Arc::clone(&db);
+        let package_ids = Rc::clone(&package_ids);
+        let unassigned = Rc::clone(&unassigned_packages);
+        
+        move || {
+            let ui = ui_handle.unwrap();
+            let packages_model = ui.get_unassigned_packages();
+            let db_guard = db.lock().unwrap();
+            
+            let mut saved_count = 0;
+            let mut error_count = 0;
+            
+            for i in 0..packages_model.row_count() {
+                if let Some(pkg) = packages_model.row_data(i) {
+                    // Skip if no apartment assigned
+                    if pkg.apt.is_empty() {
+                        error_count += 1;
+                        println!("⚠️  Skipping package #{} - no apartment assigned", i + 1);
+                        continue;
+                    }
+                    
+                    let comment = if pkg.comment.is_empty() {
+                        None
+                    } else {
+                        Some(pkg.comment.as_str())
+                    };
+                    
+                    match add_package(
+                        &*db_guard,
+                        pkg.apt.as_str(),
+                        &(i + 1).to_string(),
+                        pkg.barcode.as_str(),
+                        comment,
+                    ) {
+                        Ok(_) => {
+                            saved_count += 1;
+                            println!("✅ Saved: Package #{} → Apt {}", i + 1, pkg.apt);
+                        }
+                        Err(e) => {
+                            error_count += 1;
+                            println!("❌ Failed to save package #{}: {}", i + 1, e);
+                        }
+                    }
+                }
+            }
+            
+            // Refresh package list
+            let row_data = get_packages_data(&*db_guard).unwrap();
+            let (table_model, ids) = convert_package_data_vec(row_data);
+            *package_ids.borrow_mut() = ids;
+            ui.set_packages_data(table_model);
+            
+            // Clear temporary storage
+            unassigned.borrow_mut().clear();
+            
+            // Show result
+            if error_count == 0 {
+                ui.set_info_alert(format!("✅ {} packages saved successfully!", saved_count).into());
+            } else {
+                ui.set_info_alert(format!("⚠️  {} saved, {} failed", saved_count, error_count).into());
+            }
+            
+            println!("\n📊 Final: {} saved, {} errors", saved_count, error_count);
+        }
+    });
+    
+    // Clear scanned packages
+    ui.on_clear_scanned_packages({
+        let ui_handle = ui.as_weak();
+        let unassigned = Rc::clone(&unassigned_packages);
+        
+        move || {
+            unassigned.borrow_mut().clear();
+            
+            if let Some(ui) = ui_handle.upgrade() {
+                let empty: Vec<PackageData> = Vec::new();
+                let model = Rc::new(VecModel::from(empty));
+                ui.set_unassigned_packages(slint::ModelRc::from(model));
+                ui.set_scan_count(0);
+            }
+            
+            println!("🗑️  Cleared all scanned packages");
+        }
+    });
 
     // Helper function to update resident list for dropdown
     fn update_resident_list(ui: &AppWindow, db: &Arc<Mutex<rusqlite::Connection>>, resident_ids: &Rc<RefCell<Vec<u32>>>) {
@@ -605,17 +882,18 @@ fn main() -> Result<(), Box<dyn Error>> {
             
             let db_guard = db.lock().unwrap();
             
-            let tracking = if package_data.tracking_number.is_empty() {
+            let comment = if package_data.comment.is_empty() {
                 None
             } else {
-                Some(package_data.tracking_number.as_str())
+                Some(package_data.comment.as_str())
             };
             
             match add_package(
                 &*db_guard,
                 package_data.apt.as_str(),
                 package_data.package_number.as_str(),
-                tracking,
+                package_data.barcode.as_str(),  // Add barcode here!
+                comment,
             ) {
                 Ok(_) => {
                     let row_data = get_packages_data(&*db_guard).unwrap();
@@ -669,7 +947,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                         id: pkg_info.id as i32,
                         apt: pkg_info.apt.into(),
                         package_number: pkg_info.package_number.into(),
-                        tracking_number: pkg_info.tracking_number
+                        barcode: pkg_info.barcode.into(),  // Add barcode!
+                        comment: pkg_info.comment
                             .unwrap_or_else(|| "N/A".to_string())
                             .into(),
                         date_time: pkg_info.date_time.into(),
