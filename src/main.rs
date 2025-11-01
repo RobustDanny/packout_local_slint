@@ -1079,6 +1079,221 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     });
 
+    // Add callback for collecting selected packages
+ui.on_collect_selected_packages({
+    let ui_handle = ui.as_weak();
+    let db = Arc::clone(&db);
+    let package_ids = Rc::clone(&package_ids);
+    
+    move |selected_ids: slint::SharedString, card_hash: slint::SharedString| {
+        println!("\n📦 Collecting selected packages...");
+        println!("  Card hash: {}", &card_hash[..16]);
+        
+        // Parse comma-separated package IDs
+        let ids: Vec<u32> = selected_ids
+            .split(',')
+            .filter_map(|s| s.trim().parse().ok())
+            .collect();
+        
+        if ids.is_empty() {
+            println!("  ⚠️ No packages selected");
+            return;
+        }
+        
+        println!("  Package IDs to collect: {:?}", ids);
+        
+        let db_guard = db.lock().unwrap();
+        let mut collected_count = 0;
+        let mut resident_name = String::new();
+        let mut failed_packages = Vec::new();
+        
+        // Collect each selected package
+        for pkg_id in &ids {
+            match collect_package(&db_guard, *pkg_id, card_hash.as_str()) {
+                Ok(name) => {
+                    collected_count += 1;
+                    resident_name = name;
+                    println!("  ✅ Package #{} collected", pkg_id);
+                }
+                Err(e) => {
+                    failed_packages.push(*pkg_id);
+                    println!("  ❌ Failed to collect package #{}: {}", pkg_id, e);
+                }
+            }
+        }
+        
+        // Refresh package data
+        let row_data = get_packages_data(&db_guard).unwrap_or_default();
+        let package_count = row_data.len();
+        let (table_model, new_ids) = convert_package_data_vec(row_data);
+        *package_ids.borrow_mut() = new_ids;
+        
+        drop(db_guard);
+        
+        // Update UI
+        if let Some(ui) = ui_handle.upgrade() {
+            ui.set_packages_data(table_model);
+            ui.set_package_count(package_count as i32);
+            ui.set_show_package_selection(false);
+            ui.set_verification_type(0);
+            ui.set_verification_status("".into());
+            
+            // Show result message
+            if collected_count > 0 {
+                let message = if failed_packages.is_empty() {
+                    format!("✅ {} collected {} package{}", 
+                        resident_name,
+                        collected_count,
+                        if collected_count > 1 { "s" } else { "" }
+                    )
+                } else {
+                    format!("⚠️ {} collected {} of {} packages", 
+                        resident_name,
+                        collected_count,
+                        ids.len()
+                    )
+                };
+                ui.set_info_alert(message.into());
+                
+                // Auto-hide alert after 5 seconds
+                let ui_weak = ui_handle.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    if let Some(ui) = ui_weak.upgrade() {
+                        ui.set_info_alert("".into());
+                    }
+                });
+            } else {
+                ui.set_info_alert("❌ Failed to collect packages".into());
+            }
+        }
+        
+        println!("📊 Collection complete: {} succeeded, {} failed", 
+            collected_count, failed_packages.len());
+    }
+});
+
+ui.on_update_selection_count({
+    let ui_handle = ui.as_weak();
+    move || {
+        if let Some(ui) = ui_handle.upgrade() {
+            let selected = ui.get_selected_packages();
+            let mut count = 0;
+            
+            for i in 0..selected.row_count() {
+                if let Some(is_selected) = selected.row_data(i) {
+                    if is_selected {
+                        count += 1;
+                    }
+                }
+            }
+            
+            ui.set_selection_count(count);
+        }
+    }
+});
+
+// Helper callback: Select all packages
+ui.on_select_all_packages({
+    let ui_handle = ui.as_weak();
+    move || {
+        if let Some(ui) = ui_handle.upgrade() {
+            let packages = ui.get_resident_packages_for_collection();
+            let count = packages.row_count();
+            
+            // Create new selection array with all true
+            let selection: Vec<bool> = vec![true; count];
+            let model = Rc::new(VecModel::from(selection));
+            ui.set_selected_packages(slint::ModelRc::from(model));
+            ui.set_selection_count(count as i32);
+            
+            println!("✅ Selected all {} packages", count);
+        }
+    }
+});
+
+// Helper callback: Deselect all packages
+ui.on_deselect_all_packages({
+    let ui_handle = ui.as_weak();
+    move || {
+        if let Some(ui) = ui_handle.upgrade() {
+            let packages = ui.get_resident_packages_for_collection();
+            let count = packages.row_count();
+            
+            // Create new selection array with all false
+            let selection: Vec<bool> = vec![false; count];
+            let model = Rc::new(VecModel::from(selection));
+            ui.set_selected_packages(slint::ModelRc::from(model));
+            ui.set_selection_count(0);
+            
+            println!("❌ Deselected all packages");
+        }
+    }
+});
+
+// Helper callback: Build ID list and call collection
+ui.on_collect_selected_packages_callback({
+    let ui_handle = ui.as_weak();
+    move || {
+        if let Some(ui) = ui_handle.upgrade() {
+            let packages = ui.get_resident_packages_for_collection();
+            let selected = ui.get_selected_packages();
+            let card_hash = ui.get_current_card_hash();
+            
+            // Build comma-separated ID list
+            let mut ids = Vec::new();
+            for i in 0..packages.row_count() {
+                if let Some(pkg) = packages.row_data(i) {
+                    if i < selected.row_count() {
+                        if let Some(is_selected) = selected.row_data(i) {
+                            if is_selected {
+                                ids.push(pkg.id.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            
+            let ids_string = ids.join(",");
+            println!("📦 Calling collect with IDs: {}", ids_string);
+            
+            // Call the actual collection function
+            ui.invoke_collect_selected_packages(ids_string.into(), card_hash);
+        }
+    }
+});
+
+ui.on_toggle_package_selection({
+    let ui_handle = ui.as_weak();
+    move |index: i32| {
+        if let Some(ui) = ui_handle.upgrade() {
+            let selected_model = ui.get_selected_packages();
+            
+            // Get current value
+            if let Some(current_value) = selected_model.row_data(index as usize) {
+                // Toggle it
+                let new_value = !current_value;
+                
+                // Update the model
+                selected_model.set_row_data(index as usize, new_value);
+                
+                // Update the count
+                let mut count = 0;
+                for i in 0..selected_model.row_count() {
+                    if let Some(is_selected) = selected_model.row_data(i) {
+                        if is_selected {
+                            count += 1;
+                        }
+                    }
+                }
+                ui.set_selection_count(count);
+                
+                println!("📦 Package #{} toggled to: {}", index + 1, new_value);
+            }
+        }
+    }
+});
+
     update_resident_list(&ui, &db, &resident_ids);
 
     ui.invoke_show_residents_data();
@@ -1192,6 +1407,45 @@ fn start_automatic_verification(
                                                 "✓ VERIFIED\n{} {}\nApartment: {}", 
                                                 first_name, last_name, apt
                                             );
+
+                                            if let Some(ui) = ui_weak.upgrade() {
+                                                if ui.get_inventory() {
+                                                    // Get packages for this resident
+                                                    let db_guard = db.lock().unwrap();
+                                                    let packages = get_packages_for_resident(&db_guard, &apt).unwrap_or_default();
+                                                    drop(db_guard);
+                                                    
+                                                    if packages.is_empty() {
+                                                        println!("⚠️ No packages found for Apt {}", apt);
+                                                        ui.set_info_alert(format!("No packages for Apt {}", apt).into());
+                                                    } else {
+                                                        // Convert packages to UI model
+                                                        let package_data: Vec<_> = packages.iter().map(|pkg| {
+                                                            PackageData {
+                                                                id: pkg.id as i32,
+                                                                apt: pkg.apt.clone().into(),
+                                                                package_number: pkg.package_number.clone().into(),
+                                                                barcode: pkg.barcode.clone().into(),
+                                                                comment: pkg.comment.clone().unwrap_or_default().into(),
+                                                                date_time: pkg.date_time.clone().into(),
+                                                            }
+                                                        }).collect();
+                                                        
+                                                        // Initialize selection array (all false)
+                                                        let selection: Vec<bool> = vec![false; package_data.len()];
+                                                        let selection_model = Rc::new(VecModel::from(selection));
+                                                        
+                                                        // Send data to UI
+                                                        let model = Rc::new(VecModel::from(package_data));
+                                                        ui.set_resident_packages_for_collection(slint::ModelRc::from(model));
+                                                        ui.set_selected_packages(slint::ModelRc::from(selection_model));
+                                                        ui.set_current_card_hash(card_hash.clone().into()); // ✅ Store hash!
+                                                        ui.set_show_package_selection(true);
+                                                        
+                                                        println!("📦 Showing {} packages for selection", packages.len());
+                                                    }
+                                                }
+                                            }
                                             
                                             println!("✅ {}", success_msg.replace("\n", " | "));
                                             
@@ -1201,23 +1455,43 @@ fn start_automatic_verification(
                                                 ui.set_last_verified_name(format!("{} {}", first_name, last_name).into());
                                                 ui.set_last_verified_apt(apt.clone().into());
                                             }
-                                            
-                                            // Check if in inventory mode and collect packages if yes
+
                                             if let Some(ui) = ui_weak.upgrade() {
                                                 if ui.get_inventory() {
-                                                    let db_guard = db.lock().unwrap();
+                                                    // Get packages for this resident
+                                                    let db_guard = db.lock().unwrap();  // ✅ Use 'db', not 'db_clone'
                                                     let packages = get_packages_for_resident(&db_guard, &apt).unwrap_or_default();
-                                                    let mut collected_count = 0;
-                                                    for pkg in &packages {
-                                                        if collect_package(&db_guard, pkg.id, &card_hash).is_ok() {
-                                                            collected_count += 1;
-                                                        }
-                                                    }
                                                     drop(db_guard);
                                                     
-                                                    ui.invoke_show_packages_data();
-                                                    ui.set_package_count(ui.get_package_count() - collected_count);
-                                                    ui.set_info_alert(format!("Collected {} packages", collected_count).into());
+                                                    if packages.is_empty() {
+                                                        println!("⚠️ No packages found for Apt {}", apt);
+                                                        ui.set_info_alert(format!("No packages for Apt {}", apt).into());
+                                                    } else {
+                                                        // Convert packages to UI model
+                                                        let package_data: Vec<_> = packages.iter().map(|pkg| {
+                                                            PackageData {
+                                                                id: pkg.id as i32,
+                                                                apt: pkg.apt.clone().into(),
+                                                                package_number: pkg.package_number.clone().into(),
+                                                                barcode: pkg.barcode.clone().into(),
+                                                                comment: pkg.comment.clone().unwrap_or_default().into(),
+                                                                date_time: pkg.date_time.clone().into(),
+                                                            }
+                                                        }).collect();
+                                                        
+                                                        // Initialize selection array (all false)
+                                                        let selection: Vec<bool> = vec![false; package_data.len()];
+                                                        let selection_model = Rc::new(VecModel::from(selection));
+                                                        
+                                                        // Send data to UI
+                                                        let model = Rc::new(VecModel::from(package_data));
+                                                        ui.set_resident_packages_for_collection(slint::ModelRc::from(model));
+                                                        ui.set_selected_packages(slint::ModelRc::from(selection_model));
+                                                        ui.set_current_card_hash(card_hash.clone().into());
+                                                        ui.set_show_package_selection(true);
+                                                        
+                                                        println!("📦 Showing {} packages for selection", packages.len());
+                                                    }
                                                 }
                                             }
 

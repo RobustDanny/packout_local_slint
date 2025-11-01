@@ -1,6 +1,4 @@
-// Copyright © SixtyFPS GmbH <info@slint.dev>
-// SPDX-License-Identifier: MIT
-
+// Modern Flat Card Styles
 import { MaterialPalette } from "../styling/material_palette.slint";
 import { MaterialStyleMetrics } from "../styling/material_style_metrics.slint";
 import { Elevation } from "./elevation.slint";
@@ -17,16 +15,20 @@ component BaseCard {
 
     forward_focus: state_layer;
 
-    if root.has_elevation : Elevation {
+    // Simplified flat shadow (no elevation component)
+    if root.has_elevation : Rectangle {
         width: 100%;
         height: 100%;
-        border_radius: background_layer.border_radius;
-        level: 1;
+        border_radius: 6px;
+        background: transparent;
+        drop-shadow-blur: 8px;
+        drop-shadow-color: #0000000A;
+        drop-shadow-offset-y: 2px;
     }
 
     background_layer := Rectangle {
         background: root.background;
-        border_radius: MaterialStyleMetrics.border_radius_12;
+        border_radius: 6px; // Flat modern radius
         border_width: root.border_width;
         border_color: root.border_color;
     }
@@ -34,7 +36,7 @@ component BaseCard {
     state_layer := StateLayerArea {
         width: 100%;
         height: 100%;
-        border_radius: background_layer.border_radius;
+        border_radius: 6px;
         visible: root.clickable;
         enabled: root.visible;
 
@@ -45,12 +47,13 @@ component BaseCard {
 
     Rectangle {
         clip: true;
-        border_radius: MaterialStyleMetrics.border_radius_12;
+        border_radius: 6px;
 
         @children
     }
 }
 
+// Clean Elevated Card - minimal shadow
 export component ElevatedCard {
     in property <bool> clickable <=> base.clickable;
 
@@ -65,12 +68,15 @@ export component ElevatedCard {
         width: 100%;
         height: 100%;
         has_elevation: true;
-        background: MaterialPalette.surface;
+        background: white; // Clean white background
+        border_width: 1px;
+        border_color: #E2E8F0; // Subtle border
 
         @children
     }
 }
 
+// Filled Card - light gray fill
 export component FilledCard {
     in property <bool> clickable <=> base.clickable;
 
@@ -84,12 +90,15 @@ export component FilledCard {
     base := BaseCard {
         width: 100%;
         height: 100%;
-        background: MaterialPalette.surface_container_highest;
+        background: #F7FAFC; // Light gray
+        border_width: 1px;
+        border_color: #E2E8F0;
 
         @children
     }
 }
 
+// Outlined Card - white with strong border
 export component OutlinedCard {
     in property <bool> clickable <=> base.clickable;
 
@@ -103,9 +112,88 @@ export component OutlinedCard {
     base := BaseCard {
         width: 100%;
         height: 100%;
-        background: MaterialPalette.surface_container_low;
+        background: white;
+        border_width: 2px; // Stronger border
+        border_color: #CBD5E0; // More visible
+
+        @children
+    }
+}
+
+// New: Colored Accent Cards
+export component AccentCard {
+    in property <bool> clickable <=> base.clickable;
+    in property <color> accent_color: #3B82F6;
+
+    callback clicked <=> base.clicked;
+
+    forward_focus: base;
+    accessible-role: button;
+    accessible-enabled: root.clickable;
+    accessible-action-default => { base.clicked(); }
+
+    base := BaseCard {
+        width: 100%;
+        height: 100%;
+        background: white;
+        border_width: 0px;
+        border_color: transparent;
+
+        Rectangle {
+            width: 4px;
+            height: 100%;
+            background: root.accent_color;
+            border-top-left-radius: 6px;
+            border-bottom-left-radius: 6px;
+        }
+
+        @children
+    }
+}
+
+// New: Success/Error/Warning Cards
+export component StatusCard {
+    in property <bool> clickable <=> base.clickable;
+    in property <string> status: "info"; // "info", "success", "warning", "error"
+
+    callback clicked <=> base.clicked;
+
+    forward_focus: base;
+
+    property <color> bg_color: status == "success" ? #F0FDF4 :
+                                 status == "warning" ? #FEF3C7 :
+                                 status == "error" ? #FEF2F2 : #EBF8FF;
+    
+    property <color> border_color: status == "success" ? #86EFAC :
+                                     status == "warning" ? #FDE047 :
+                                     status == "error" ? #FCA5A5 : #93C5FD;
+
+    base := BaseCard {
+        width: 100%;
+        height: 100%;
+        background: root.bg_color;
         border_width: 1px;
-        border_color: MaterialPalette.outline;
+        border_color: root.border_color;
+
+        @children
+    }
+}
+
+// New: Compact Card (for list items)
+export component CompactCard {
+    in property <bool> clickable <=> base.clickable;
+    in property <bool> selected: false;
+
+    callback clicked <=> base.clicked;
+
+    forward_focus: base;
+
+    base := BaseCard {
+        width: 100%;
+        height: 100%;
+        background: root.selected ? #EBF8FF : white;
+        border_width: 1px;
+        border_color: root.selected ? #3B82F6 : #E2E8F0;
 
         @children
     }

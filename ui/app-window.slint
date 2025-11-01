@@ -1,9 +1,10 @@
 import { Button, VerticalBox, GridBox, StandardTableView, LineEdit, HorizontalBox, ComboBox, StandardListView } from "std-widgets.slint";
 import {DropDownMenu, NavigationBar, SearchBar, IconButton, MaterialWindow,
-    FilledButton, ElevatedCard ,SmallAppBar, HorizontalDivider, TabBar, LargeAppBar, SegmentedButton, TonalButton, ScrollView} from "material.slint";
+    FilledButton, ElevatedCard ,SmallAppBar, HorizontalDivider, TabBar, LargeAppBar, SegmentedButton, TonalButton, ScrollView, PopupMenu, ToolTip} from "material.slint";
 
 import "./fonts/Montserrat/Montserrat-Regular.ttf";
 import "./fonts/Montserrat/Montserrat-Medium.ttf";
+import { Icon } from "components/icon.slint";
 
 struct ResidentData{
     id: int,
@@ -160,6 +161,7 @@ export component AppWindow inherits MaterialWindow {
     out property <bool> show_package_form: false;
     out property <bool> show_package_info: false;
     out property <bool> show_collection_mode: false;
+    in-out property <int> selection_count: 0;
     
     in-out property <int> current_tab: 0;
 
@@ -257,6 +259,12 @@ export component AppWindow inherits MaterialWindow {
     callback search_packages(string, int);
     callback start_collection_mode();
     callback collect_package_with_card(int, string) -> string;
+    callback toggle_package_selection(int);
+
+    in-out property <[PackageData]> resident_packages_for_collection: [];
+    in-out property <bool> show_package_selection: false;
+    in-out property <[bool]> selected_packages: [];
+    in-out property <string> current_card_hash: "";
 
     callback add_resident(ResidentData);
     callback add_card(CardData);
@@ -270,6 +278,11 @@ export component AppWindow inherits MaterialWindow {
     callback search_logs(string, int);
 
     callback remove_resident(int);
+    callback collect_selected_packages(string, string);
+    callback select_all_packages();  // Add this
+    callback deselect_all_packages();  // Add this
+    callback collect_selected_packages_callback();
+    callback update_selection_count();
 
     callback show_residents_data();
     callback show_card_data();
@@ -280,8 +293,8 @@ export component AppWindow inherits MaterialWindow {
     callback get_resident_at_index(int) -> ResidentData;
 
     background: #FFFEFC;
-    width: 1200px;
-    height: 1000px;
+    // width: 1200px;
+    // height: 1000px;
     padding: 20px;
     title: "Packout";
     icon: @image-url("icons/package-box.svg");
@@ -330,6 +343,220 @@ export component AppWindow inherits MaterialWindow {
         }
     }
 
+    if root.show_package_selection : Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #000000CC;
+        z: 60;
+        
+        // TouchArea {
+        //     clicked => {
+        //         // Toggle selection
+        //         root.selected_packages[index] = !root.selected_packages[index];
+                
+        //         // Update count
+        //         update_selection_count();
+        //     }
+        // }
+        
+        ElevatedCard {
+            width: 600px;
+            height: 700px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            
+            VerticalBox {
+                padding: 30px;
+                spacing: 20px;
+                
+                HorizontalBox {
+                    alignment: space-between;
+                    
+                    VerticalBox {
+                        spacing: 5px;
+                        Text {
+                            text: "Select Packages to Collect";
+                            font-size: 20px;
+                            font-weight: 700;
+                        }
+                        Text {
+                            text: root.last_verified_name + " - Apt " + root.last_verified_apt;
+                            font-size: 14px;
+                            color: #666;
+                        }
+                    }
+                    
+                    FilledButton {
+                        text: "✕";
+                        width: 40px;
+                        height: 40px;
+                        clicked => {
+                            root.show_package_selection = false;
+                            root.verification_type = 0;
+                        }
+                    }
+                }
+                
+                Rectangle {
+                    height: 1px;
+                    background: #E0E0E0;
+                }
+                
+                // Select All / Deselect All
+                HorizontalBox {
+                    spacing: 10px;
+                    
+                    FilledButton {
+                        text: "Select All";
+                        height: 40px;
+                        clicked => {
+                            select_all_packages();
+                        }
+                    }
+                    
+                    FilledButton {
+                        text: "Deselect All";
+                        height: 40px;
+                        clicked => {
+                            deselect_all_packages();
+                        }
+                    }
+                }
+                
+                ScrollView {
+                    VerticalBox {
+                        spacing: 10px;
+                        
+                        if root.resident_packages_for_collection.length == 0 : Rectangle {
+                            height: 100px;
+                            VerticalBox {
+                                alignment: center;
+                                Text {
+                                    text: "No packages found for this apartment";
+                                    color: #999;
+                                    font-size: 14px;
+                                }
+                            }
+                        }
+                        
+                        for pkg[index] in root.resident_packages_for_collection : Rectangle {
+                            height: 80px;
+                            border-radius: 10px;
+                            background: root.selected_packages[index] ? #E3F2FD : #F5F5F5;
+                            border-width: 2px;
+                            border-color: root.selected_packages[index] ? #2196F3 : #E0E0E0;
+                            
+                            TouchArea {
+                                clicked => {
+                                    toggle_package_selection(index);
+                                }
+                            }
+                            
+                            HorizontalBox {
+                                padding: 15px;
+                                spacing: 15px;
+                                alignment: space-between;
+                                
+                                HorizontalBox {
+                                    spacing: 15px;
+                                    
+                                    // Checkbox indicator
+                                    Rectangle {
+                                        width: 24px;
+                                        height: 24px;
+                                        border-radius: 4px;
+                                        background: root.selected_packages[index] ? #2196F3 : white;
+                                        border-width: 2px;
+                                        border-color: root.selected_packages[index] ? #2196F3 : #999;
+                                        
+                                        if root.selected_packages[index] : Text {
+                                            text: "✓";
+                                            color: white;
+                                            font-size: 16px;
+                                            font-weight: 700;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                    
+                                    VerticalBox {
+                                        spacing: 5px;
+                                        
+                                        Text {
+                                            text: "Package #" + pkg.package_number;
+                                            font-weight: 700;
+                                            font-size: 14px;
+                                        }
+                                        
+                                        Text {
+                                            text: "Barcode: " + pkg.barcode;
+                                            font-size: 12px;
+                                            color: #666;
+                                        }
+                                        
+                                        if pkg.comment != "" : Text {
+                                            text: "Note: " + pkg.comment;
+                                            font-size: 11px;
+                                            color: #FF9800;
+                                        }
+                                    }
+                                }
+                                
+                                VerticalBox {
+                                    alignment: center;
+                                    Text {
+                                        text: pkg.date_time;
+                                        font-size: 11px;
+                                        color: #999;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                Rectangle {
+                    height: 1px;
+                    background: #E0E0E0;
+                }
+                
+                HorizontalBox {
+                    alignment: space-between;
+                    
+                    Text {
+                        text: root.selection_count + " package" + (root.selection_count != 1 ? "s" : "") + " selected";
+                        font-size: 14px;
+                        color: #666;
+                    }
+                    
+                    HorizontalBox {
+                        spacing: 15px;
+                        
+                        FilledButton {
+                            text: "Cancel";
+                            width: 120px;
+                            height: 50px;
+                            clicked => {
+                                root.show_package_selection = false;
+                                root.verification_type = 0;
+                            }
+                        }
+                        
+                        FilledButton {
+                            text: "Collect Selected";
+                            width: 150px;
+                            height: 50px;
+                            enabled: root.selection_count > 0;
+                            clicked => {
+                                collect_selected_packages_callback();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Resident Info Form
     ElevatedCard {
         visible: root.show_resident_form;
@@ -342,79 +569,104 @@ export component AppWindow inherits MaterialWindow {
         VerticalBox {
             padding: 30px;
             spacing: 20px;
-            alignment: center;
-            
-            Text { 
-                text: "Add New Resident";
-                font-size: 20px;
-                font-weight: 700;
-            }
-            
-            Rectangle {
-                height: 1px;
-                background: #E0E0E0;
-            }
-            
-            VerticalBox {
-                spacing: 15px;
-                
-                VerticalBox {
-                    spacing: 8px;
-                    Text {
-                        text: "Apartment Number:";
+            alignment: space-between;
+            VerticalLayout {
+                HorizontalLayout {
+                    alignment: space-between;
+                    Text { 
+                        text: "Add New Resident";
+                        font-size: 20px;
                         font-weight: 700;
-                        font-size: 14px;
                     }
-                    LineEdit {
-                        placeholder-text: "e.g., 101";
-                        height: 45px;
-                        edited(new_text) => {
-                            resident.apt = new_text;
+                    VerticalLayout {
+                        alignment: center;
+                        IconButton {
+                            width: 32px;
+                            height: 32px;
+                            z: 100;
+                            icon: @image-url("icons/more.svg");
+                            tooltip: "1. Select a resident from the list above 2. Click 'Scan & Link Card' button 3. Place NFC card on the reader 4. Keep card on reader until complete";
                         }
                     }
                 }
                 
+                Rectangle {
+                    height: 1px;
+                    background: #E0E0E0;
+                }
+                
                 VerticalBox {
-                    spacing: 8px;
-                    Text {
-                        text: "First Name:";
-                        font-weight: 700;
-                        font-size: 14px;
+                    spacing: 10px;
+                    
+                    VerticalBox {
+                        spacing: 8px;
+                        Text {
+                            text: "Apartment Number:";
+                            font-weight: 700;
+                            font-size: 14px;
+                        }
+                        LineEdit {
+                            placeholder-text: "e.g., 101";
+                            height: 45px;
+                            edited(new_text) => {
+                                resident.apt = new_text;
+                            }
+                        }
                     }
-                    LineEdit {
-                        placeholder-text: "Enter first name";
-                        height: 45px;
-                        edited(new_text) => {
-                            resident.first_name = new_text;
+                    
+                    VerticalBox {
+                        spacing: 8px;
+                        Text {
+                            text: "First Name:";
+                            font-weight: 700;
+                            font-size: 14px;
+                        }
+                        LineEdit {
+                            placeholder-text: "Enter first name";
+                            height: 45px;
+                            edited(new_text) => {
+                                resident.first_name = new_text;
+                            }
+                        }
+                    }
+                    
+                    VerticalBox {
+                        spacing: 8px;
+                        Text {
+                            text: "Last Name:";
+                            font-weight: 700;
+                            font-size: 14px;
+                        }
+                        LineEdit {
+                            placeholder-text: "Enter last name";
+                            height: 45px;
+                            edited(new_text) => {
+                                resident.last_name = new_text;
+                            }
                         }
                     }
                 }
                 
-                VerticalBox {
-                    spacing: 8px;
-                    Text {
-                        text: "Last Name:";
-                        font-weight: 700;
-                        font-size: 14px;
-                    }
-                    LineEdit {
-                        placeholder-text: "Enter last name";
-                        height: 45px;
-                        edited(new_text) => {
-                            resident.last_name = new_text;
-                        }
-                    }
+                Rectangle {
+                    height: 10px;
                 }
             }
-            
-            Rectangle {
-                height: 10px;
-            }
-            
+                 
             HorizontalBox {
                 alignment: center;
-                spacing: 15px;
+                spacing: 20px;
                 
+                FilledButton {
+                    height: 50px;
+                    width: 150px;
+                    text: "Cancel";
+                    clicked() => {
+                        root.show_resident_form = false;
+                        resident.apt = "";
+                        resident.first_name = "";
+                        resident.last_name = "";
+                    }
+                }
                 FilledButton {
                     height: 50px;
                     width: 150px;
@@ -422,18 +674,6 @@ export component AppWindow inherits MaterialWindow {
                     enabled: resident.apt != "" && resident.first_name != "" && resident.last_name != "";
                     clicked() => {
                         add_resident(resident);
-                        root.show_resident_form = false;
-                        resident.apt = "";
-                        resident.first_name = "";
-                        resident.last_name = "";
-                    }
-                }
-                
-                FilledButton {
-                    height: 50px;
-                    width: 150px;
-                    text: "Cancel";
-                    clicked() => {
                         root.show_resident_form = false;
                         resident.apt = "";
                         resident.first_name = "";
@@ -456,112 +696,111 @@ export component AppWindow inherits MaterialWindow {
         VerticalBox {
             padding: 30px;
             spacing: 20px;
-            alignment: center;
-            
-            Text { 
-                text: "Link Card to Resident";
-                font-size: 20px;
-                font-weight: 700;
-            }
-            
-            Rectangle {
-                height: 1px;
-                background: #E0E0E0;
-            }
-            
-            VerticalBox {
-                spacing: 15px;
-                
-                Text {
-                    text: "Select Resident:";
-                    font-weight: 700;
-                    font-size: 14px;
-                }
-                
-                ComboBox {
-                    model: resident_list;
-                    current-index <=> selected_resident_index;
-                    current-value: selected_resident_index >= 0 ? resident_list[selected_resident_index] : "-- Select a resident --";
-                    selected(value) => {
-                        if (selected_resident_index >= 0) {
-                            root.resident_info = get_resident_at_index(selected_resident_index);
-                        }
+            alignment: space-between;
+            VerticalLayout {
+                HorizontalLayout {
+                    alignment: space-between;
+                    Text { 
+                        text: "Link Card";
+                        font-size: 20px;
+                        font-weight: 700;
                     }
-                }
-                
-                if selected_resident_index >= 0 : VerticalBox {
-                    spacing: 10px;
-                    
-                    Rectangle {
-                        height: 1px;
-                        background: #E0E0E0;
-                    }
-                    
-                    HorizontalBox {
-                        Text {
-                            text: "Resident:";
-                            font-weight: 700;
-                            width: 100px;
-                        }
-                        Text {
-                            text: resident_info.first_name + " " + resident_info.last_name;
+                    VerticalLayout {
+                        alignment: center;
+                        IconButton {
+                            width: 32px;
+                            height: 32px;
+                            z: 100;
+                            icon: @image-url("icons/more.svg");
+                            tooltip: "1. Select a resident from the list above 2. Click 'Scan & Link Card' button 3. Place NFC card on the reader 4. Keep card on reader until complete";
                         }
                     }
                     
-                    HorizontalBox {
-                        Text {
-                            text: "Apartment:";
-                            font-weight: 700;
-                            width: 100px;
+                }
+                  
+                Rectangle {
+                    height: 1px;
+                    background: #E0E0E0;
+                }
+                
+                VerticalBox {
+                    spacing: 15px;
+                    
+                    Text {
+                        text: "Select Resident:";
+                        font-weight: 700;
+                        font-size: 14px;
+                    }
+                    
+                    ComboBox {
+                        model: resident_list;
+                        current-index <=> selected_resident_index;
+                        current-value: selected_resident_index >= 0 ? resident_list[selected_resident_index] : "-- Select a resident --";
+                        selected(value) => {
+                            if (selected_resident_index >= 0) {
+                                root.resident_info = get_resident_at_index(selected_resident_index);
+                            }
                         }
-                        Text {
-                            text: resident_info.apt;
+                    }
+                    
+                    if selected_resident_index >= 0 : VerticalBox {
+                        spacing: 10px;
+                        
+                        Rectangle {
+                            height: 1px;
+                            background: #E0E0E0;
+                        }
+                        
+                        HorizontalBox {
+                            Text {
+                                text: "Resident:";
+                                font-weight: 700;
+                                width: 100px;
+                            }
+                            Text {
+                                text: resident_info.first_name + " " + resident_info.last_name;
+                            }
+                        }
+                        
+                        HorizontalBox {
+                            Text {
+                                text: "Apartment:";
+                                font-weight: 700;
+                                width: 100px;
+                            }
+                            Text {
+                                text: resident_info.apt;
+                            }
                         }
                     }
                 }
-            }
-            
-            Rectangle {
-                height: 10px;
-            }
-            
-            VerticalBox {
-                spacing: 10px;
                 
-                Text {
-                    text: "Instructions:";
-                    font-weight: 700;
-                    font-size: 16px;
-                }
-                
-                Text {
-                    text: "1. Select a resident from the list above";
-                    horizontal-alignment: left;
-                }
-                
-                Text {
-                    text: "2. Click 'Scan & Link Card' button";
-                    horizontal-alignment: left;
-                }
-                
-                Text {
-                    text: "3. Place NFC card on the reader";
-                    horizontal-alignment: left;
-                }
-                
-                Text {
-                    text: "4. Keep card on reader until complete";
-                    horizontal-alignment: left;
+                Rectangle {
+                    height: 10px;
                 }
             }
             
-            Rectangle {
-                height: 10px;
-            }
             HorizontalBox {
                 alignment: center;
-                spacing: 15px;
+                spacing: 20px;
                 
+                FilledButton {
+                    height: 50px;
+                    width: 150px;
+                    text: "Cancel";
+                    clicked() => {
+                        root.show_link_card_form = false;
+                        root.selected_resident_index = -1;
+                        root.resident_info = {
+                            id: 0,
+                            apt: "",
+                            first_name: "",
+                            last_name: "",
+                            linked: false,
+                        };
+                    }
+                }
+
                 FilledButton {
                     height: 50px;
                     width: 150px;
@@ -579,22 +818,6 @@ export component AppWindow inherits MaterialWindow {
                     }
                 }
 
-                FilledButton {
-                    height: 50px;
-                    width: 150px;
-                    text: "Cancel";
-                    clicked() => {
-                        root.show_link_card_form = false;
-                        root.selected_resident_index = -1;
-                        root.resident_info = {
-                            id: 0,
-                            apt: "",
-                            first_name: "",
-                            last_name: "",
-                            linked: false,
-                        };
-                    }
-                }
             }
         }
     }
@@ -740,31 +963,49 @@ export component AppWindow inherits MaterialWindow {
         VerticalLayout {
             padding: 30px;
             spacing: 15px;
-            
-            // Header with counter
             HorizontalLayout {
-                alignment: space-between;
+            alignment: center;
+            spacing: 20px;    
+            VerticalLayout {
+                padding: 20px;
+                spacing: 15px;
+                alignment: center;
                 
-                VerticalLayout {
-                    spacing: 5px;
-                    Text { 
-                        text: "⚡ Quick Scan Mode";
-                        font-size: 24px;
-                        font-weight: 700;
-                        color: #FF6F00;
-                    }
-                    Text {
-                        text: "Scan all packages first, assign apartments later";
-                        font-size: 13px;
-                        color: #666;
+                LineEdit {
+                    placeholder-text: "Click here and scan continuously...";
+                    text <=> root.scanned_barcode;
+                    height: 60px;
+                    width: 80%;
+                    font-size: 14px;
+                    accepted(text) => {
+                        if (text != "") {
+                            // Get current comment (if any)
+                            let comment = package.comment;
+                            
+                            // Auto-save scanned package
+                            quick_scan_package(text, comment);
+                            
+                            // Increment counter
+                            root.scan_count = root.scan_count + 1;
+                            
+                            // Clear barcode field immediately
+                            root.scanned_barcode = "";
+                            
+                            // Clear comment field ONLY if it was used
+                            if (comment != "") {
+                                package.comment = "";
+                            }
+                        }
                     }
                 }
-                
+            }
+            VerticalLayout {
+                alignment: center;
                 Rectangle {
-                    width: 120px;
+                    width: 20%;
                     height: 60px;
                     border-radius: 12px;
-                    background: #4CAF50;
+                    // background: #4CAF50;
                     
                     VerticalLayout {
                         alignment: center;
@@ -774,163 +1015,95 @@ export component AppWindow inherits MaterialWindow {
                             text: root.scan_count;
                             font-size: 32px;
                             font-weight: 700;
-                            color: white;
+                            // color: white;
                         }
                         Text {
                             text: "Scanned";
                             font-size: 11px;
-                            color: white;
+                            // color: white;
                         }
                     }
                 }
             }
             
-            Rectangle {
-                height: 2px;
-                background: #E0E0E0;
-            }
             
+            }
             // Large Scanning Area
-            Rectangle {
-                height: 150px;
-                border-radius: 16px;
-                background: #E3F2FD;
-                border-width: 4px;
-                border-color: #2196F3;
-                
-                VerticalLayout {
-                    padding: 20px;
-                    spacing: 15px;
-                    alignment: center;
-                    
-                    Text {
-                        text: "🔦 SCAN BARCODE";
-                        font-size: 20px;
-                        font-weight: 700;
-                        color: #1976D2;
-                    }
-                    
-                    LineEdit {
-                        placeholder-text: "Click here and scan continuously...";
-                        text <=> root.scanned_barcode;
-                        height: 60px;
-                        font-size: 20px;
-                        accepted(text) => {
-                            if (text != "") {
-                                // Get current comment (if any)
-                                let comment = package.comment;
-                                
-                                // Auto-save scanned package
-                                quick_scan_package(text, comment);
-                                
-                                // Increment counter
-                                root.scan_count = root.scan_count + 1;
-                                
-                                // Clear barcode field immediately
-                                root.scanned_barcode = "";
-                                
-                                // Clear comment field ONLY if it was used
-                                if (comment != "") {
-                                    package.comment = "";
-                                }
-                            }
-                        }
-                    }
-                    
-                    HorizontalLayout {
-                        spacing: 15px;
-                        alignment: center;
-                        
-                        Text {
-                            text: "💡 Scan → Auto-adds → Keep scanning!";
-                            font-size: 12px;
-                            color: #1976D2;
-                            font-weight: 700;
-                        }
-                        
-                        Text {
-                            text: "Comment applies to NEXT scan";
-                            font-size: 12px;
-                            color: #FF6F00;
-                            font-weight: 700;
-                        }
-                    }
-                }
-            }
+            
             
             // Optional Comment Field
-            VerticalLayout {
-                spacing: 8px;
+            // VerticalLayout {
+            //     spacing: 8px;
                 
-                HorizontalLayout {
-                    spacing: 10px;
-                    alignment: space-between;
+            //     HorizontalLayout {
+            //         spacing: 10px;
+            //         alignment: space-between;
                     
-                    Text {
-                        text: "📝 Add Note for NEXT Package:";
-                        font-weight: 700;
-                        font-size: 14px;
-                        color: #FF6F00;
-                    }
+            //         Text {
+            //             text: "📝 Add Note for NEXT Package:";
+            //             font-weight: 700;
+            //             font-size: 14px;
+            //             color: #FF6F00;
+            //         }
                     
-                    if package.comment != "" : Rectangle {
-                        height: 40px;
-                        border-radius: 8px;
-                        background: #FFF3E0;
-                        border-width: 2px;
-                        border-color: #FF9800;
+            //         if package.comment != "" : Rectangle {
+            //             height: 40px;
+            //             border-radius: 8px;
+            //             background: #FFF3E0;
+            //             border-width: 2px;
+            //             border-color: #FF9800;
                         
-                        HorizontalLayout {
-                            padding: 10px;
-                            spacing: 10px;
-                            alignment: center;
+            //             HorizontalLayout {
+            //                 padding: 10px;
+            //                 spacing: 10px;
+            //                 alignment: center;
                             
-                            Text {
-                                text: "⚡ Next scan will include:";
-                                font-size: 11px;
-                                color: #E65100;
-                                font-weight: 700;
-                            }
+            //                 Text {
+            //                     text: "⚡ Next scan will include:";
+            //                     font-size: 11px;
+            //                     color: #E65100;
+            //                     font-weight: 700;
+            //                 }
                             
-                            Text {
-                                text: "\"" + package.comment + "\"";
-                                font-size: 11px;
-                                color: #F57F17;
-                            }
-                        }
-                    }
-                }
+            //                 Text {
+            //                     text: "\"" + package.comment + "\"";
+            //                     font-size: 11px;
+            //                     color: #F57F17;
+            //                 }
+            //             }
+            //         }
+            //     }
                 
-                HorizontalLayout {
-                    spacing: 10px;
+            //     HorizontalLayout {
+            //         spacing: 10px;
                     
-                    LineEdit {
-                        placeholder-text: "e.g., Fragile, Large, Heavy...";
-                        text: package.comment;
-                        height: 45px;
-                        edited(new_text) => {
-                            package.comment = new_text;
-                        }
-                    }
+            //         LineEdit {
+            //             placeholder-text: "e.g., Fragile, Large, Heavy...";
+            //             text: package.comment;
+            //             height: 45px;
+            //             edited(new_text) => {
+            //                 package.comment = new_text;
+            //             }
+            //         }
                     
-                    FilledButton {
-                        text: "Clear";
-                        width: 80px;
-                        height: 45px;
-                        visible: package.comment != "";
-                        clicked() => {
-                            package.comment = "";
-                        }
-                    }
-                }
+            //         FilledButton {
+            //             text: "Clear";
+            //             width: 80px;
+            //             height: 45px;
+            //             visible: package.comment != "";
+            //             clicked() => {
+            //                 package.comment = "";
+            //             }
+            //         }
+            //     }
                 
-                Text {
-                    text: "💡 Type comment BEFORE scanning the package that needs it";
-                    font-size: 10px;
-                    color: #FF6F00;
-                    font-weight: 700;
-                }
-            }
+            //     Text {
+            //         text: "💡 Type comment BEFORE scanning the package that needs it";
+            //         font-size: 10px;
+            //         color: #FF6F00;
+            //         font-weight: 700;
+            //     }
+            // }
             
             Rectangle {
                 height: 1px;
@@ -941,44 +1114,26 @@ export component AppWindow inherits MaterialWindow {
             VerticalLayout {
                 spacing: 10px;
                 
-                HorizontalLayout {
-                    alignment: space-between;
-                    
-                    Text {
-                        text: "📋 Scanned Packages:";
-                        font-weight: 700;
-                        font-size: 14px;
-                    }
-                    
-                    if root.scan_count > 0 : Text {
-                        text: root.scan_count + " packages ready";
-                        font-size: 12px;
-                        color: #4CAF50;
-                        font-weight: 700;
-                    }
-                }
-                
                 ScrollView {
-                    height: 200px;
+                    // height: 200px;
                     
                     VerticalLayout {
                         spacing: 8px;
                         
-                        if root.scan_count == 0 : Rectangle {
+                        if root.scan_count < 1 : Rectangle {
                             height: 100px;
-                            VerticalLayout {
+                            HorizontalLayout {
                                 alignment: center;
-                                Text {
-                                    text: "No packages scanned yet";
-                                    color: #999;
-                                    font-size: 14px;
-                                }
-                                Text {
-                                    text: "Click in the blue field above and start scanning!";
-                                    color: #BBB;
-                                    font-size: 12px;
+                                VerticalLayout {
+                                    alignment: center;
+                                    Text {
+                                        text: "No packages scanned yet";
+                                        color: #999;
+                                        font-size: 14px;
+                                    }
                                 }
                             }
+                            
                         }
                         
                         // List of scanned packages
@@ -1006,7 +1161,7 @@ export component AppWindow inherits MaterialWindow {
                                     
                                     Text {
                                         text: pkg.barcode;
-                                        font-family: "monospace";
+                                        // font-family: "monospace";
                                         font-size: 12px;
                                     }
                                     
@@ -1044,8 +1199,8 @@ export component AppWindow inherits MaterialWindow {
                 spacing: 15px;
                 
                 FilledButton {
-                    text: "Clear All";
-                    width: 120px;
+                    text: "Clear";
+                    width: 100px;
                     height: 50px;
                     visible: root.scan_count > 0;
                     clicked() => {
@@ -1055,17 +1210,7 @@ export component AppWindow inherits MaterialWindow {
                 }
                 
                 HorizontalLayout {
-                    spacing: 10px;
-                    
-                    FilledButton {
-                        text: "Next: Assign Apartments →";
-                        width: 220px;
-                        height: 50px;
-                        enabled: root.scan_count > 0;
-                        clicked() => {
-                            root.show_assign_mode = true;
-                        }
-                    }
+                    spacing: 20px;
                     
                     FilledButton {
                         text: "Cancel";
@@ -1075,6 +1220,16 @@ export component AppWindow inherits MaterialWindow {
                             root.show_package_form = false;
                             clear_scanned_packages();
                             root.scan_count = 0;
+                        }
+                    }
+
+                    FilledButton {
+                        text: "Next";
+                        width: 100px;
+                        height: 50px;
+                        enabled: root.scan_count > 0;
+                        clicked() => {
+                            root.show_assign_mode = true;
                         }
                     }
                 }
@@ -1095,48 +1250,14 @@ export component AppWindow inherits MaterialWindow {
             padding: 30px;
             spacing: 20px;
             
-            // Header
             HorizontalLayout {
-                alignment: space-between;
-                
-                VerticalLayout {
-                    spacing: 5px;
-                    Text { 
-                        text: "📍 Assign Apartments";
-                        font-size: 24px;
-                        font-weight: 700;
-                        color: #1976D2;
-                    }
-                    Text {
-                        text: "Assign apartment numbers to scanned packages";
-                        font-size: 13px;
-                        color: #666;
-                    }
-                }
-                
-                FilledButton {
-                    text: "← Back to Scanning";
-                    width: 180px;
-                    height: 45px;
-                    clicked() => {
-                        root.show_assign_mode = false;
-                    }
-                }
-            }
-            
-            Rectangle {
-                height: 2px;
-                background: #E0E0E0;
-            }
-            
-            HorizontalLayout {
-                spacing: 30px;
-                alignment: stretch;
+                spacing: 20px;
+                // alignment: stretch;
                 
                 // Left: Package List
                 VerticalLayout {
-                    width: 500px;
-                    spacing: 15px;
+                    width: 60%;
+                    spacing: 20px;
                     
                     Text {
                         text: "Packages (" + root.scan_count + ")";
@@ -1145,92 +1266,116 @@ export component AppWindow inherits MaterialWindow {
                     }
                     
                     ScrollView {
-                        height: 500px;
-                        
-                        VerticalLayout {
-                            spacing: 10px;
-                            
-                            for pkg[index] in unassigned_packages : Rectangle {
-                                height: 80px;
-                                border-radius: 10px;
-                                background: pkg.apt == "" ? #FFEBEE : #E8F5E9;
-                                border-width: 2px;
-                                border-color: pkg.apt == "" ? #FF5252 : #4CAF50;
+                        // height: 500px;
+                        HorizontalLayout {
+                            VerticalLayout {
+                                spacing: 10px;
                                 
-                                TouchArea {
-                                    clicked => {
-                                        root.selected_package_index = index;
-                                    }
-                                }
-                                
-                                VerticalLayout {
-                                    padding: 12px;
-                                    spacing: 8px;
+                                for pkg[index] in unassigned_packages : Rectangle {
+                                    height: 80px;
+                                    border-radius: 10px;
+                                    background: pkg.apt == "" ? #FFEBEE : #E8F5E9;
+                                    // border-width: 2px;
+                                    border-color: pkg.apt == "" ? #FF5252 : #4CAF50;
                                     
+                                    TouchArea {
+                                        clicked => {
+                                            root.selected_package_index = index;
+                                        }
+                                    }
                                     HorizontalLayout {
                                         alignment: space-between;
-                                        
-                                        Text {
-                                            text: "Package #" + (index + 1);
-                                            font-weight: 700;
-                                            font-size: 14px;
+                                        VerticalLayout {
+                                            padding: 12px;
+                                            spacing: 8px;
+    
+                                            Text {
+                                                text: "Package #" + (index + 1);
+                                                font-weight: 700;
+                                                font-size: 14px;
+                                            }
+    
+                                            Text {
+                                                text: pkg.barcode;
+                                                // font-family: "monospace";
+                                                font-size: 12px;
+                                                color: #666;
+                                            }
+                                            
+                                            if pkg.comment != "" : Text {
+                                                text: pkg.comment;
+                                                font-size: 11px;
+                                                color: #999;
+                                            }
                                         }
-                                        
-                                        if pkg.apt == "" : Rectangle {
-                                            width: 100px;
-                                            height: 24px;
-                                            border-radius: 12px;
-                                            background: #FF5252;
-                                            HorizontalLayout {
-                                                alignment: center;
-                                                Text {
-                                                    text: "⏳ Pending";
-                                                    color: white;
-                                                    font-size: 11px;
-                                                    font-weight: 700;
+
+                                        VerticalBox {
+                                            padding: 10px;
+                                            if pkg.apt == "" : Rectangle {
+                                                width: 100px;
+                                                // height: 24px;
+                                                border-radius: 12px;
+                                                background: #FF5252;
+                                                HorizontalLayout {
+                                                    alignment: center;
+                                                    VerticalLayout {
+                                                        alignment: center;
+                                                        Text {
+                                                            text: "No";
+                                                            color: white;
+                                                            font-size: 15px;
+                                                            font-weight: 700;
+                                                        }
+                                                        Text {
+                                                            text: "Apt";
+                                                            color: white;
+                                                            font-size: 15px;
+                                                            font-weight: 700;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            
+                                            if pkg.apt != "" : Rectangle {
+                                                width: 100px;
+                                                // height: 24px;
+                                                border-radius: 12px;
+                                                background: #4CAF50;
+                                                HorizontalLayout {
+                                                    alignment: center;
+                                                    VerticalLayout {
+                                                        alignment: center;
+                                                        Text {
+                                                            text: "Apt";
+                                                            color: white;
+                                                            font-size: 15px;
+                                                            font-weight: 700;
+                                                        }
+                                                        Text {
+                                                            text: pkg.apt;
+                                                            color: white;
+                                                            font-size: 15px;
+                                                            font-weight: 700;
+                                                        }
+                                                    }
+                                                    
                                                 }
                                             }
                                         }
                                         
-                                        if pkg.apt != "" : Rectangle {
-                                            width: 100px;
-                                            height: 24px;
-                                            border-radius: 12px;
-                                            background: #4CAF50;
-                                            HorizontalLayout {
-                                                alignment: center;
-                                                Text {
-                                                    text: "✓ Apt " + pkg.apt;
-                                                    color: white;
-                                                    font-size: 11px;
-                                                    font-weight: 700;
-                                                }
-                                            }
-                                        }
                                     }
                                     
-                                    Text {
-                                        text: pkg.barcode;
-                                        font-family: "monospace";
-                                        font-size: 12px;
-                                        color: #666;
-                                    }
-                                    
-                                    if pkg.comment != "" : Text {
-                                        text: "📝 " + pkg.comment;
-                                        font-size: 11px;
-                                        color: #999;
-                                    }
                                 }
                             }
                         }
+                        
                     }
                 }
                 
                 // Right: Assignment Panel
                 VerticalLayout {
                     spacing: 20px;
-                    
+                    width: 30%;
                     // Bulk Assignment
                     ElevatedCard {
                         VerticalLayout {
@@ -1238,7 +1383,7 @@ export component AppWindow inherits MaterialWindow {
                             spacing: 15px;
                             
                             Text {
-                                text: "🚀 Quick Assign";
+                                text: "Quick Assign";
                                 font-weight: 700;
                                 font-size: 16px;
                             }
@@ -1283,7 +1428,7 @@ export component AppWindow inherits MaterialWindow {
                             spacing: 15px;
                             
                             Text {
-                                text: "📍 Assign Individual";
+                                text: "Idividual";
                                 font-weight: 700;
                                 font-size: 16px;
                             }
@@ -1352,9 +1497,10 @@ export component AppWindow inherits MaterialWindow {
                                         spacing: 10px;
                                         
                                         LineEdit {
-                                            placeholder-text: "Add/edit comment";
+                                            placeholder-text: "Add comment";
                                             text <=> root.individual_comment;
                                             height: 45px;
+                                            font-size: 16px;
                                             // Handle Enter key press
                                             accepted(text) => {
                                                 if root.selected_package_index >= 0 {
@@ -1380,16 +1526,16 @@ export component AppWindow inherits MaterialWindow {
                                     }
                                 }
                                 
-                                FilledButton {
-                                    text: "✓ Done with this package";
-                                    width: 100%;
-                                    height: 40px;
-                                    clicked() => {
-                                        root.selected_package_index = -1;
-                                        root.individual_apt = "";
-                                        root.individual_comment = "";
-                                    }
-                                }
+                                // FilledButton {
+                                //     text: "✓ Done with this package";
+                                //     width: 100%;
+                                //     height: 40px;
+                                //     clicked() => {
+                                //         root.selected_package_index = -1;
+                                //         root.individual_apt = "";
+                                //         root.individual_comment = "";
+                                //     }
+                                // }
                             }
                             
                             if root.selected_package_index < 0 : VerticalLayout {
@@ -1422,22 +1568,24 @@ export component AppWindow inherits MaterialWindow {
                     }
                     
                     // Completion
-                    ElevatedCard {
-                        VerticalLayout {
+                        HorizontalLayout {
                             padding: 20px;
-                            spacing: 15px;
+                            spacing: 20px;
                             alignment: center;
                             
-                            Text {
-                                text: "✅ Complete Assignment";
-                                font-weight: 700;
-                                font-size: 16px;
-                            }
-                            
                             FilledButton {
-                                text: "Save All Packages";
-                                width: 200px;
-                                height: 55px;
+                                text: "Back";
+                                width: 100px;
+                                height: 50px;
+                                clicked() => {
+                                    root.show_assign_mode = false;
+                                }
+                            }
+
+                            FilledButton {
+                                text: "Save All";
+                                width: 100px;
+                                height: 50px;
                                 clicked() => {
                                     // Save all assigned packages to database
                                     save_assigned_packages();
@@ -1449,7 +1597,6 @@ export component AppWindow inherits MaterialWindow {
                                 }
                             }
                         }
-                    }
                 }
             }
         }
@@ -1866,11 +2013,12 @@ export component AppWindow inherits MaterialWindow {
         height: 100%;
         background: #F5F5F5;
         z: 50;
+        padding: 20px;
         
         VerticalBox {
             padding: 40px;
             alignment: start;
-            spacing: 30px;
+            spacing: 20px;
             
             HorizontalBox {
                 alignment: space-between;
@@ -1906,11 +2054,11 @@ export component AppWindow inherits MaterialWindow {
             }
             
             HorizontalBox {
-                spacing: 30px;
-                alignment: stretch;
+                spacing: 20px;
+                // alignment: stretch;
                 
                 ElevatedCard {
-                    width: 500px;
+                    // width: 500px;
                     
                     VerticalBox {
                         padding: 20px;
@@ -1923,18 +2071,13 @@ export component AppWindow inherits MaterialWindow {
                                 font-size: 18px;
                                 font-weight: 700;
                             }
-                            Rectangle {
-                                width: 50px;
-                                height: 30px;
-                                border-radius: 15px;
-                                background: #4CAF50;
-                                HorizontalBox {
-                                    alignment: center;
-                                    Text {
-                                        text: root.package_count;
-                                        color: white;
-                                        font-weight: 700;
-                                    }
+                                
+                            HorizontalBox {
+                                alignment: center;
+                                Text {
+                                    text: root.package_count;
+                                    // color: white;
+                                    font-weight: 700;
                                 }
                             }
                         }
@@ -1945,72 +2088,64 @@ export component AppWindow inherits MaterialWindow {
                         }
                         
                         ScrollView {
-                            height: 500px;
+                            // height: 500px;
                             VerticalBox {
                                 spacing: 10px;
                                 
                                 for row in packages_data : Rectangle {
-                                    height: 80px;
+                                    width: 80px;
+                                    height: 60px;
+                                    padding: 10px;
                                     border-radius: 8px;
-                                    background: #FFFFFF;
-                                    border-width: 2px;
-                                    border-color: #E0E0E0;
+                                    background: #2196F3;
+                                    VerticalBox {
+                                        alignment: center;
+                                        HorizontalLayout {
+                                            alignment: center;
+                                            Text {
+                                                text: row[1].text;
+                                                color: white;
+                                                font-size: 18px;
+                                                font-weight: 700;
+                                            }
+                                        }
+                                        
+                                    }
                                     
                                     TouchArea {
                                         clicked => {}
                                     }
                                     
-                                    HorizontalBox {
-                                        padding: 15px;
-                                        spacing: 15px;
+                                    // HorizontalBox {
+                                    //     padding: 15px;
+                                    //     spacing: 15px;
+
                                         
-                                        Rectangle {
-                                            width: 60px;
-                                            height: 60px;
-                                            border-radius: 8px;
-                                            background: #2196F3;
-                                            VerticalBox {
-                                                alignment: center;
-                                                Text {
-                                                    text: "APT";
-                                                    color: white;
-                                                    font-size: 10px;
-                                                    font-weight: 700;
-                                                }
-                                                Text {
-                                                    text: row[1].text;
-                                                    color: white;
-                                                    font-size: 18px;
-                                                    font-weight: 700;
-                                                }
-                                            }
-                                        }
-                                        
-                                        VerticalBox {
-                                            spacing: 5px;
-                                            alignment: center;
+                                        // VerticalBox {
+                                        //     spacing: 5px;
+                                        //     alignment: center;
                                             
-                                            HorizontalBox {
-                                                Text {
-                                                    text: "Package #" + row[2].text;
-                                                    font-weight: 700;
-                                                    font-size: 16px;
-                                                }
-                                            }
+                                        //     HorizontalBox {
+                                        //         Text {
+                                        //             text: "Package #" + row[2].text;
+                                        //             font-weight: 700;
+                                        //             font-size: 16px;
+                                        //         }
+                                        //     }
                                             
-                                            Text {
-                                                text: "Tracking: " + row[3].text;
-                                                font-size: 12px;
-                                                color: #666;
-                                            }
+                                        //     Text {
+                                        //         text: "Comment: " + row[3].text;
+                                        //         font-size: 12px;
+                                        //         color: #666;
+                                        //     }
                                             
-                                            Text {
-                                                text: "Received: " + row[4].text;
-                                                font-size: 11px;
-                                                color: #999;
-                                            }
-                                        }
-                                    }
+                                        //     Text {
+                                        //         text: "Received: " + row[4].text;
+                                        //         font-size: 11px;
+                                        //         color: #999;
+                                        //     }
+                                        // }
+                                    // }
                                 }
                             }
                         }
@@ -2018,10 +2153,11 @@ export component AppWindow inherits MaterialWindow {
                 }
                 
                 VerticalBox {
-                    spacing: 20px;
+                    // spacing: 20px;
+                    alignment: space-between;
                     
                     ElevatedCard {
-                        height: 300px;
+                        // height: 300px;
                         
                         VerticalBox {
                             padding: 30px;
@@ -2141,6 +2277,7 @@ export component AppWindow inherits MaterialWindow {
                     
                     HorizontalBox {
                         spacing: 20px;
+                        // alignment: space-between;
                         
                         ElevatedCard {
                             VerticalBox {
@@ -2264,10 +2401,10 @@ export component AppWindow inherits MaterialWindow {
     }
 
     // Main UI
-    HorizontalBox {
+    HorizontalLayout {
         alignment: center;
-        width: 100%;
-        height: 100%;
+        // width: 100%;
+        // height: 100%;
 
         VerticalBox {
             padding: 20px;
@@ -2277,7 +2414,7 @@ export component AppWindow inherits MaterialWindow {
             HorizontalBox {
                 alignment: center;
                 spacing: 20px;
-                width: 1000px;
+                // width: 1000px;
                 height: 80px;
 
                 VerticalBox {
@@ -2380,6 +2517,15 @@ export component AppWindow inherits MaterialWindow {
                                 root.show_package_form = !root.show_package_form;
                             }
                         }
+                        PopupMenu {
+                            width: 280px;
+                            height: parent.height;
+                            items: [
+                              { text: "Copy" },
+                              { text: "Cut" },
+                              { text: "Paste" },
+                            ];
+                        }
                         IconButton {
                             width: 32px;
                             height: 32px;
@@ -2405,7 +2551,7 @@ export component AppWindow inherits MaterialWindow {
                 alignment: center;
                 StandardTableView {
                     min-width: 800px;
-                    max-width: 800px;
+                    max-width: 1000px;
                     visible: !root.inventory;
                     columns: root.table_columns;
                     rows: root.current_tab == 0 ? residents_data :
